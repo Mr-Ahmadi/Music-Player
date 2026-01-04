@@ -168,12 +168,6 @@ To contribute improvements:
 
 MIT License - see LICENSE file for details
 
-## Support
-
-For issues or questions:
-- Check the [GitHub Issues](https://github.com/yourusername/OfflineMusicPlayer/issues)
-- Review the code comments in `AudioPlayer.swift` and `ContentView.swift`
-
 ---
 
 **Version**: 1.0.0  
