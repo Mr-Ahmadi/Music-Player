@@ -17,7 +17,24 @@
 		3959A8961E872CA300ADA57A /* AudioPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3959A8961E872CA100ADA57A /* AudioPlayer.swift */; };
 		3959A8971E872CA300ADA57A /* DocumentPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3959A8971E872CA100ADA57A /* DocumentPicker.swift */; };
 		3959A8981E872CA300ADA57A /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3959A8981E872CA100ADA57A /* PlayerView.swift */; };
+		3959A8A12E872CA100ADA57A /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3959A8A22E872CA400ADA57A /* ShareViewController.swift */; };
+		3959A8A32E872CA100ADA57A /* ShareExtensionUI.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 3959A8A42E872CA400ADA57A /* ShareExtensionUI.storyboard */; };
+		3959A8AC2E872CA500ADA57A /* OfflineMusicPlayerShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 3959A8A12E872CA400ADA57A /* OfflineMusicPlayerShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		3959A8AA2E872CA500ADA57A /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(PLUGINS_FOLDER_PATH)";
+			dstSubfolderSpec = 13;
+			files = (
+				3959A8AC2E872CA500ADA57A /* OfflineMusicPlayerShareExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXContainerItemProxy section */
 		3959A8852E872CA300ADA57A /* PBXContainerItemProxy */ = {
@@ -33,6 +50,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 3959A8732E872CA100ADA57A;
 			remoteInfo = OfflineMusicPlayer;
+		};
+		3959A8AD2E872CA500ADA57A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3959A86C2E872CA100ADA57A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3959A8A22E872CA400ADA57A;
+			remoteInfo = OfflineMusicPlayerShareExtension;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -50,6 +74,10 @@
 		3959A8961E872CA100ADA57A /* AudioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayer.swift; sourceTree = "<group>"; };
 		3959A8971E872CA100ADA57A /* DocumentPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentPicker.swift; sourceTree = "<group>"; };
 		3959A8981E872CA100ADA57A /* PlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerView.swift; sourceTree = "<group>"; };
+		3959A8A12E872CA400ADA57A /* OfflineMusicPlayerShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = OfflineMusicPlayerShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		3959A8A22E872CA400ADA57A /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		3959A8A42E872CA400ADA57A /* ShareExtensionUI.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = ShareExtensionUI.storyboard; sourceTree = "<group>"; };
+		3959A8A52E872CA400ADA57A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };;
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -74,6 +102,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		3959A8A82E872CA400ADA57A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -83,6 +118,7 @@
 				3959A8762E872CA100ADA57A /* OfflineMusicPlayer */,
 				3959A8872E872CA300ADA57A /* OfflineMusicPlayerTests */,
 				3959A8912E872CA300ADA57A /* OfflineMusicPlayerUITests */,
+				3959A8A02E872CA400ADA57A /* OfflineMusicPlayerShareExtension */,
 				3959A8752E872CA100ADA57A /* Products */,
 			);
 			sourceTree = "<group>";
@@ -93,6 +129,7 @@
 				3959A8742E872CA100ADA57A /* OfflineMusicPlayer.app */,
 				3959A8842E872CA300ADA57A /* OfflineMusicPlayerTests.xctest */,
 				3959A88E2E872CA300ADA57A /* OfflineMusicPlayerUITests.xctest */,
+				3959A8A12E872CA400ADA57A /* OfflineMusicPlayerShareExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -136,6 +173,16 @@
 			path = OfflineMusicPlayerUITests;
 			sourceTree = "<group>";
 		};
+		3959A8A02E872CA400ADA57A /* OfflineMusicPlayerShareExtension */ = {
+			isa = PBXGroup;
+			children = (
+				3959A8A22E872CA400ADA57A /* ShareViewController.swift */,
+				3959A8A42E872CA400ADA57A /* ShareExtensionUI.storyboard */,
+				3959A8A52E872CA400ADA57A /* Info.plist */,
+			);
+			path = OfflineMusicPlayerShareExtension;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -146,10 +193,12 @@
 				3959A8702E872CA100ADA57A /* Sources */,
 				3959A8712E872CA100ADA57A /* Frameworks */,
 				3959A8722E872CA100ADA57A /* Resources */,
+				3959A8AA2E872CA500ADA57A /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				3959A8AB2E872CA500ADA57A /* PBXTargetDependency */,
 			);
 			name = OfflineMusicPlayer;
 			productName = OfflineMusicPlayer;
@@ -192,6 +241,23 @@
 			productReference = 3959A88E2E872CA300ADA57A /* OfflineMusicPlayerUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		3959A8A22E872CA400ADA57A /* OfflineMusicPlayerShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3959A8A62E872CA400ADA57A /* Build configuration list for PBXNativeTarget "OfflineMusicPlayerShareExtension" */;
+			buildPhases = (
+				3959A8A72E872CA400ADA57A /* Sources */,
+				3959A8A82E872CA400ADA57A /* Frameworks */,
+				3959A8A92E872CA400ADA57A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = OfflineMusicPlayerShareExtension;
+			productName = OfflineMusicPlayerShareExtension;
+			productReference = 3959A8A12E872CA400ADA57A /* OfflineMusicPlayerShareExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -231,6 +297,7 @@
 				3959A8732E872CA100ADA57A /* OfflineMusicPlayer */,
 				3959A8832E872CA300ADA57A /* OfflineMusicPlayerTests */,
 				3959A88D2E872CA300ADA57A /* OfflineMusicPlayerUITests */,
+				3959A8A22E872CA400ADA57A /* OfflineMusicPlayerShareExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -256,6 +323,14 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3959A8A92E872CA400ADA57A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3959A8A32E872CA400ADA57A /* ShareExtensionUI.storyboard in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -291,6 +366,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		3959A8A72E872CA400ADA57A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3959A8A12E872CA400ADA57A /* ShareViewController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -303,6 +386,11 @@
 			isa = PBXTargetDependency;
 			target = 3959A8732E872CA100ADA57A /* OfflineMusicPlayer */;
 			targetProxy = 3959A88F2E872CA300ADA57A /* PBXContainerItemProxy */;
+		};
+		3959A8AB2E872CA500ADA57A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 3959A8A22E872CA400ADA57A /* OfflineMusicPlayerShareExtension */;
+			targetProxy = 3959A8AD2E872CA500ADA57A /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -431,6 +519,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = OfflineMusicPlayer/OfflineMusicPlayer.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"OfflineMusicPlayer/Preview Content\"";
@@ -459,6 +548,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = OfflineMusicPlayer/OfflineMusicPlayer.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"OfflineMusicPlayer/Preview Content\"";
@@ -560,6 +650,58 @@
 			};
 			name = Release;
 		};
+		3959A8A62E872CA400ADA57A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = OfflineMusicPlayerShareExtension/OfflineMusicPlayerShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = D67ZT3S6S5;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = OfflineMusicPlayerShareExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Save to Music Player";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = FireIntrest.MusicPlayer.ShareExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		3959A8A72E872CA400ADA57A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = OfflineMusicPlayerShareExtension/OfflineMusicPlayerShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = D67ZT3S6S5;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = OfflineMusicPlayerShareExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Save to Music Player";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = FireIntrest.MusicPlayer.ShareExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -595,6 +737,15 @@
 			buildConfigurations = (
 				3959A89F2E872CA300ADA57A /* Debug */,
 				3959A8A02E872CA300ADA57A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		3959A8A62E872CA400ADA57A /* Build configuration list for PBXNativeTarget "OfflineMusicPlayerShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3959A8A62E872CA400ADA57A /* Debug */,
+				3959A8A72E872CA400ADA57A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

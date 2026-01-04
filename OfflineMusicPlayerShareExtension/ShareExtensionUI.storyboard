@@ -1,0 +1,68 @@
+interface IB Document { ... }
+<?xml version="1.0" encoding="UTF-8"?>
+<document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="22.1" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" launchScreen="NO" useTraitCollections="YES" useSafeAreaLayoutGuide="YES" colorLacked="NO">
+    <device id="retina6_1" orientation="portrait" appearance="light"/>
+    <dependencies>
+        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="22.1"/>
+        <capability name="Safe area layout guides" minToolsVersion="9.0"/>
+        <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
+    </dependencies>
+    <scenes>
+        <!--Share View Controller-->
+        <scene sceneID="ceB-am-kn3">
+            <objects>
+                <viewController storyboardIdentifier="ShareViewController" id="huB-ZY-jmy" customClass="ShareViewController" customModule="OfflineMusicPlayerShareExtension" sceneMemberID="viewController">
+                    <view key="view" opaque="NO" contentMode="scaleToFill" id="wvN-Ej-bqH">
+                        <rect key="frame" x="0.0" y="0.0" width="414" height="896"/>
+                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+                        <subviews>
+                            <navigationBar opaque="NO" clearsContextBeforeDrawing="NO" contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="sT3-7p-PmL">
+                                <rect key="frame" x="0.0" y="44" width="414" height="44"/>
+                                <items>
+                                    <navigationItem id="Hc6-3e-pB5">
+                                        <barButtonItem systemItem="done" id="cDz-37-lKX" customClass="UIBarButtonItem"/>
+                                    </navigationItem>
+                                </items>
+                            </navigationBar>
+                            <stackView opaque="NO" contentMode="scaleToFill" axis="vertical" alignment="center" spacing="20" translatesAutoresizingMaskIntoConstraints="NO" id="YqD-bP-Ceg">
+                                <rect key="frame" x="87" y="396" width="240" height="104"/>
+                                <subviews>
+                                    <activityIndicatorView opaque="NO" contentMode="scaleToFill" horizontalHuggingPriority="750" verticalHuggingPriority="750" style="large" translatesAutoresizingMaskIntoConstraints="NO" id="vpr-w0-MZR">
+                                        <rect key="frame" x="102" y="0.0" width="37" height="37"/>
+                                    </activityIndicatorView>
+                                    <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="Processing..." textAlignment="center" lineBreakMode="tailTruncation" numberOfLines="0" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="Mzd-sY-LPM">
+                                        <rect key="frame" x="39" y="57" width="162" height="47"/>
+                                        <fontDescription key="fontDescription" type="system" pointSize="17"/>
+                                        <nil key="textColor"/>
+                                        <nil key="highlightedColor"/>
+                                    </label>
+                                </subviews>
+                            </stackView>
+                        </subviews>
+                        <viewLayoutGuide key="safeArea" id="EkJ-FS-ugP"/>
+                        <color key="backgroundColor" systemColor="systemBackgroundColor"/>
+                        <constraints>
+                            <constraint firstItem="YqD-bP-Ceg" firstAttribute="centerX" secondItem="wvN-Ej-bqH" secondAttribute="centerX" id="Evi-Ls-Qd1"/>
+                            <constraint firstItem="YqD-bP-Ceg" firstAttribute="centerY" secondItem="wvN-Ej-bqH" secondAttribute="centerY" id="fMp-X7-tFn"/>
+                            <constraint firstItem="sT3-7p-PmL" firstAttribute="leading" secondItem="EkJ-FS-ugP" secondAttribute="leading" id="jMt-bC-cF6"/>
+                            <constraint firstItem="sT3-7p-PmL" firstAttribute="trailing" secondItem="EkJ-FS-ugP" secondAttribute="trailing" id="knP-QO-tEu"/>
+                            <constraint firstItem="sT3-7p-PmL" firstAttribute="top" secondItem="EkJ-FS-ugP" secondAttribute="top" id="nrE-gL-Ffd"/>
+                        </constraints>
+                    </view>
+                    <connections>
+                        <outlet property="statusLabel" destination="Mzd-sY-LPM" id="aXN-7V-3kw"/>
+                        <outlet property="activityIndicator" destination="vpr-w0-MZR" id="cYl-Kt-zG8"/>
+                        <outlet property="doneButton" destination="cDz-37-lKX" id="Rcg-Yw-B2z"/>
+                    </connections>
+                </viewController>
+                <placeholder placeholderIdentifier="IBFirstResponder" id="W5J-7L-Pxx" sceneMemberID="firstResponder"/>
+            </objects>
+            <point key="canvasLocation" x="20" y="20"/>
+        </scene>
+    </scenes>
+    <resources>
+        <systemColor name="systemBackgroundColor">
+            <color white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
+        </systemColor>
+    </resources>
+</document>

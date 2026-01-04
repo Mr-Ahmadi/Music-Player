@@ -18,6 +18,8 @@ final class AudioPlayer: NSObject, ObservableObject {
     private var isAccessingSecurityResource: Bool = false
     private var bookmarks: [String: Data] = [:] // Store security scope bookmarks by filename
     private let bookmarksKey = "audioFileBookmarks"
+    private var sharedFilesObserver: NSObjectProtocol?
+    private let appGroupIdentifier = "group.com.offlinemusicplayer.shared"
 
     override init() {
         super.init()
@@ -26,7 +28,10 @@ final class AudioPlayer: NSObject, ObservableObject {
         // Load saved tracks off the main thread to avoid blocking UI
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             self?.loadTracks()
+            self?.syncSharedFiles()
         }
+        // Listen for shared file notifications from extension
+        setupSharedFileObserver()
     }
 
     private func setupAudioSession() {
@@ -385,6 +390,118 @@ final class AudioPlayer: NSObject, ObservableObject {
     private func loadBookmarks() {
         if let stored = UserDefaults.standard.dictionary(forKey: bookmarksKey) as? [String: Data] {
             bookmarks = stored
+        }
+    }
+    
+    // MARK: - App Groups / Share Extension Support
+    
+    private func setupSharedFileObserver() {
+        // Listen for file system changes in shared container
+        let sharedContainerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)
+        guard let containerURL = sharedContainerURL else {
+            print("AudioPlayer: failed to access app group container")
+            return
+        }
+        
+        // Periodically check for new shared files
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 1) { [weak self] in
+            self?.startMonitoringSharedFiles(containerURL: containerURL)
+        }
+    }
+    
+    private func startMonitoringSharedFiles(containerURL: URL) {
+        // Check every 2 seconds for new shared files
+        Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] timer in
+            self?.syncSharedFiles()
+            
+            // Clean up notification flag if it exists
+            let notificationFile = containerURL.appendingPathComponent(".notification")
+            try? FileManager.default.removeItem(at: notificationFile)
+        }
+    }
+    
+    private func syncSharedFiles() {
+        guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) else {
+            return
+        }
+        
+        let sharedImportDir = containerURL.appendingPathComponent("ImportedAudio", isDirectory: true)
+        
+        do {
+            let fileManager = FileManager.default
+            guard fileManager.fileExists(atPath: sharedImportDir.path) else {
+                return
+            }
+            
+            let sharedFiles = try fileManager.contentsOfDirectory(at: sharedImportDir, includingPropertiesForKeys: nil)
+            
+            for sharedFileURL in sharedFiles {
+                // Skip hidden files
+                if sharedFileURL.lastPathComponent.hasPrefix(".") {
+                    continue
+                }
+                
+                // Check if this is an audio file we should import
+                if isAudioFile(sharedFileURL) {
+                    let fileName = sharedFileURL.lastPathComponent
+                    
+                    // Check if we already have this track
+                    let alreadyExists = tracks.contains { $0.lastPathComponent == fileName }
+                    
+                    if !alreadyExists {
+                        // Import the shared file
+                        importSharedFile(sharedFileURL)
+                    }
+                }
+            }
+        } catch {
+            print("AudioPlayer: error syncing shared files: \(error)")
+        }
+    }
+    
+    private func isAudioFile(_ url: URL) -> Bool {
+        let audioExtensions = ["mp3", "m4a", "wav", "aac", "flac", "ogg", "aiff", "ac3", "mp4"]
+        return audioExtensions.contains(url.pathExtension.lowercased())
+    }
+    
+    private func importSharedFile(_ sharedFileURL: URL) {
+        let fileManager = FileManager.default
+        let localImportDir: URL = {
+            let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
+            let dir = docs.appendingPathComponent("ImportedAudio", isDirectory: true)
+            if !fileManager.fileExists(atPath: dir.path) {
+                try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
+            }
+            return dir
+        }()
+        
+        // Generate unique filename in local app container
+        var destURL = localImportDir.appendingPathComponent(sharedFileURL.lastPathComponent)
+        var counter = 1
+        
+        while fileManager.fileExists(atPath: destURL.path) {
+            let base = sharedFileURL.deletingPathExtension().lastPathComponent
+            let ext = sharedFileURL.pathExtension
+            let newName = "\(base) - \(counter)\(ext.isEmpty ? "" : ".\(ext)")"
+            destURL = localImportDir.appendingPathComponent(newName)
+            counter += 1
+        }
+        
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                // Copy file from shared container to app container
+                try fileManager.copyItem(at: sharedFileURL, to: destURL)
+                
+                DispatchQueue.main.async {
+                    if !(self?.tracks.contains(destURL) ?? false) {
+                        self?.tracks.append(destURL)
+                    }
+                }
+                
+                print("AudioPlayer: successfully imported shared file \(destURL.lastPathComponent)")
+            } catch {
+                print("AudioPlayer: failed to import shared file: \(error)")
+            }
         }
     }
     
