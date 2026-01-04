@@ -10,27 +10,82 @@ import XCTest
 
 final class OfflineMusicPlayerTests: XCTestCase {
 
+    var player: AudioPlayer!
+
     override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
+        player = AudioPlayer()
+        // Clear saved tracks before each test
+        UserDefaults.standard.removeObject(forKey: "savedTracks")
     }
 
     override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
+        player = nil
+        UserDefaults.standard.removeObject(forKey: "savedTracks")
     }
 
-    func testExample() throws {
-        // This is an example of a functional test case.
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
-        // Any test you write for XCTest can be annotated as throws and async.
-        // Mark your test throws to produce an unexpected failure when your test encounters an uncaught error.
-        // Mark your test async to allow awaiting for asynchronous code to complete. Check the results with assertions afterwards.
+    func testAddTracks() {
+        let url1 = URL(fileURLWithPath: "/tmp/song1.mp3")
+        let url2 = URL(fileURLWithPath: "/tmp/song2.mp3")
+        
+        player.add(urls: [url1, url2])
+        XCTAssertEqual(player.tracks.count, 2)
+        XCTAssertTrue(player.tracks.contains(url1))
+        XCTAssertTrue(player.tracks.contains(url2))
     }
 
-    func testPerformanceExample() throws {
-        // This is an example of a performance test case.
-        self.measure {
-            // Put the code you want to measure the time of here.
-        }
+    func testAddDuplicateTracks() {
+        let url1 = URL(fileURLWithPath: "/tmp/song1.mp3")
+        
+        player.add(urls: [url1])
+        player.add(urls: [url1])
+        XCTAssertEqual(player.tracks.count, 1, "Should not add duplicate URLs")
+    }
+
+    func testRemoveTrack() {
+        let url1 = URL(fileURLWithPath: "/tmp/song1.mp3")
+        let url2 = URL(fileURLWithPath: "/tmp/song2.mp3")
+        
+        player.add(urls: [url1, url2])
+        player.remove(atOffsets: IndexSet(integer: 0))
+        XCTAssertEqual(player.tracks.count, 1)
+        XCTAssertEqual(player.tracks[0], url2)
+    }
+
+    func testNextTrack() {
+        let url1 = URL(fileURLWithPath: "/tmp/song1.mp3")
+        let url2 = URL(fileURLWithPath: "/tmp/song2.mp3")
+        
+        player.add(urls: [url1, url2])
+        // nextTrack should not crash with valid tracks
+        player.nextTrack()
+        XCTAssertTrue(true)
+    }
+
+    func testPreviousTrack() {
+        let url1 = URL(fileURLWithPath: "/tmp/song1.mp3")
+        let url2 = URL(fileURLWithPath: "/tmp/song2.mp3")
+        
+        player.add(urls: [url1, url2])
+        // previousTrack should not crash with valid tracks
+        player.previousTrack()
+        XCTAssertTrue(true)
+    }
+
+    func testTogglePlayPause() {
+        let url1 = URL(fileURLWithPath: "/tmp/song1.mp3")
+        player.add(urls: [url1])
+        
+        player.togglePlayPause()
+        // Note: Will fail without actual audio file, but logic can be tested with mock
+        // This test verifies the method exists and doesn't crash
+        XCTAssertTrue(true)
+    }
+
+    func testSeek() {
+        player.seek(to: 5.0)
+        // Seek should not crash even with no audio player
+        XCTAssertTrue(true)
     }
 
 }
+

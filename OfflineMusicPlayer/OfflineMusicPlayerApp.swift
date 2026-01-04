@@ -1,6 +1,6 @@
 //
 //  OfflineMusicPlayerApp.swift
-//  OfflineMusicPlayer
+//  MusicPlayer
 //
 //  Created by Ali Ahmadi on 9/26/25.
 //
@@ -8,7 +8,7 @@
 import SwiftUI
 
 @main
-struct OfflineMusicPlayerApp: App {
+struct MusicPlayerApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
