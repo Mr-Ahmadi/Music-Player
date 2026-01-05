@@ -10,6 +10,17 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var player = AudioPlayer()
     @State private var showingImporter = false
+    @State private var searchText = ""
+
+    var filteredTracks: [URL] {
+        if searchText.isEmpty {
+            return player.tracks
+        } else {
+            return player.tracks.filter { 
+                $0.lastPathComponent.localizedCaseInsensitiveContains(searchText)
+            }
+        }
+    }
 
     var body: some View {
         NavigationView {
@@ -29,18 +40,38 @@ struct ContentView: View {
                     }
                     .padding()
                 } else {
-                    List {
-                        ForEach(player.tracks, id: \.self) { url in
-                            Button(action: { player.play(url: url) }) {
-                                HStack {
-                                    Image(systemName: "music.note")
-                                    Text(url.lastPathComponent)
-                                        .lineLimit(1)
+                    SearchBar(text: $searchText)
+                    
+                    if filteredTracks.isEmpty {
+                        VStack(spacing: 12) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.title2)
+                                .foregroundColor(.secondary)
+                            Text("No tracks found")
+                                .foregroundColor(.secondary)
+                        }
+                        .padding()
+                    } else {
+                        List {
+                            ForEach(filteredTracks, id: \.self) { url in
+                                Button(action: { player.play(url: url) }) {
+                                    HStack {
+                                        Image(systemName: "music.note")
+                                        Text(url.lastPathComponent)
+                                            .lineLimit(1)
+                                    }
                                 }
                             }
-                        }
-                        .onDelete { indices in
-                            player.remove(atOffsets: indices)
+                            .onDelete { indices in
+                                for index in indices.sorted(by: >) {
+                                    if let trackIndex = player.tracks.firstIndex(of: filteredTracks[index]) {
+                                        player.tracks.remove(at: trackIndex)
+                                    }
+                                }
+                            }
+                            .onMove { indices, destination in
+                                player.tracks.move(fromOffsets: indices, toOffset: destination)
+                            }
                         }
                     }
                 }
@@ -73,3 +104,26 @@ struct ContentView_Previews: PreviewProvider {
     }
 }
 #endif
+
+struct SearchBar: View {
+    @Binding var text: String
+
+    var body: some View {
+        HStack {
+            Image(systemName: "magnifyingglass")
+                .foregroundColor(.gray)
+
+            TextField("Search tracks...", text: $text)
+                .textFieldStyle(RoundedBorderTextFieldStyle())
+
+            if !text.isEmpty {
+                Button(action: { text = "" }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.gray)
+                }
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+    }
+}

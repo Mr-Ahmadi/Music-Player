@@ -1,0 +1,12 @@
+{
+  "source": "/Users/aliahmadi/Documents/Projects/OfflineMusicPlayer/OfflineMusicPlayer/PlayerView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Not playing"
+      }
+    ]
+  },
+  "version": 1
+}

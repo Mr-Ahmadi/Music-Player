@@ -18,11 +18,14 @@ final class AudioPlayer: NSObject, ObservableObject {
     private var isAccessingSecurityResource: Bool = false
     private var bookmarks: [String: Data] = [:] // Store security scope bookmarks by filename
     private let bookmarksKey = "audioFileBookmarks"
+    private var fileHashes: [String: String] = [:] // Store file hashes to detect duplicates
+    private let fileHashesKey = "audioFileHashes"
 
     override init() {
         super.init()
         setupAudioSession()
         loadBookmarks()
+        loadFileHashes()
         // Load saved tracks off the main thread to avoid blocking UI
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             self?.loadTracks()
@@ -39,6 +42,34 @@ final class AudioPlayer: NSObject, ObservableObject {
         }
     }
 
+    private func calculateFileHash(_ url: URL) -> String? {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: url.path) else { return nil }
+        
+        do {
+            let fileAttributes = try fileManager.attributesOfItem(atPath: url.path)
+            let fileSize = fileAttributes[.size] as? NSNumber ?? 0
+            let modificationDate = fileAttributes[.modificationDate] as? Date ?? Date()
+            let hash = "\(fileSize)-\(modificationDate.timeIntervalSince1970)"
+            return hash
+        } catch {
+            print("AudioPlayer: failed to calculate hash for \(url.lastPathComponent) - \(error)")
+            return nil
+        }
+    }
+
+    private func isDuplicate(url: URL) -> Bool {
+        guard let hash = calculateFileHash(url) else { return false }
+        
+        // Check if this hash already exists in our library
+        for (_, existingHash) in fileHashes {
+            if hash == existingHash {
+                return true
+            }
+        }
+        return false
+    }
+
     func add(urls: [URL]) {
         // Copy picked files into app container (avoids security-scope on iOS)
         let fileManager = FileManager.default
@@ -52,6 +83,12 @@ final class AudioPlayer: NSObject, ObservableObject {
         }()
 
         for url in urls {
+            // Check for duplicates BEFORE copying
+            if isDuplicate(url: url) {
+                print("AudioPlayer: duplicate file detected - skipping \(url.lastPathComponent)")
+                continue
+            }
+            
             // Sanitize filename by removing problematic characters (pipe, etc.)
             let sanitizedFileName = url.lastPathComponent
                 .replacingOccurrences(of: "|", with: "-")
@@ -87,6 +124,15 @@ final class AudioPlayer: NSObject, ObservableObject {
                     
                     // Copy the file into app container
                     try fileManager.copyItem(at: url, to: dest)
+                    
+                    // Store the file hash to detect duplicates
+                    if let hash = self.calculateFileHash(dest) {
+                        DispatchQueue.main.async {
+                            self.fileHashes[dest.lastPathComponent] = hash
+                            self.saveFileHashes()
+                        }
+                    }
+                    
                     DispatchQueue.main.async {
                         if !self.tracks.contains(dest) {
                             self.tracks.append(dest)
@@ -248,6 +294,10 @@ final class AudioPlayer: NSObject, ObservableObject {
             bookmarks.removeValue(forKey: fileName)
             saveBookmarks()
             #endif
+            
+            // Remove associated file hash
+            fileHashes.removeValue(forKey: fileName)
+            saveFileHashes()
 
             // If file exists in app container, delete it asynchronously
             let fileManager = FileManager.default
@@ -327,6 +377,10 @@ final class AudioPlayer: NSObject, ObservableObject {
     func remove(atOffsets offsets: IndexSet) {
         tracks.remove(atOffsets: offsets)
     }
+    
+    func move(fromOffsets offsets: IndexSet, toOffset offset: Int) {
+        tracks.move(fromOffsets: offsets, toOffset: offset)
+    }
 
     private func startTimer() {
         stopTimer()
@@ -385,6 +439,16 @@ final class AudioPlayer: NSObject, ObservableObject {
     private func loadBookmarks() {
         if let stored = UserDefaults.standard.dictionary(forKey: bookmarksKey) as? [String: Data] {
             bookmarks = stored
+        }
+    }
+    
+    private func saveFileHashes() {
+        UserDefaults.standard.set(fileHashes, forKey: fileHashesKey)
+    }
+    
+    private func loadFileHashes() {
+        if let stored = UserDefaults.standard.dictionary(forKey: fileHashesKey) as? [String: String] {
+            fileHashes = stored
         }
     }
     
