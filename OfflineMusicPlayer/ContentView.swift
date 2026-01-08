@@ -1,14 +1,7 @@
-//
-//  ContentView.swift
-//  OfflineMusicPlayer
-//
-//  Created by Ali Ahmadi on 9/26/25.
-//
-
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var player = AudioPlayer()
+    @EnvironmentObject var player: AudioPlayer
     @State private var showingImporter = false
     @State private var searchText = ""
 
@@ -16,7 +9,7 @@ struct ContentView: View {
         if searchText.isEmpty {
             return player.tracks
         } else {
-            return player.tracks.filter { 
+            return player.tracks.filter {
                 $0.lastPathComponent.localizedCaseInsensitiveContains(searchText)
             }
         }
@@ -24,106 +17,230 @@ struct ContentView: View {
 
     var body: some View {
         NavigationView {
-            VStack {
+            VStack(spacing: 0) {
                 if player.tracks.isEmpty {
-                    VStack(spacing: 16) {
-                        Image(systemName: "music.note.list")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 120, height: 120)
-                            .foregroundStyle(.tint)
-                        Text("No tracks")
-                            .font(.title2)
-                        Text("Import audio files to play them offline.")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding()
+                    emptyStateView
                 } else {
                     SearchBar(text: $searchText)
-                    
+
                     if filteredTracks.isEmpty {
-                        VStack(spacing: 12) {
-                            Image(systemName: "magnifyingglass")
-                                .font(.title2)
-                                .foregroundColor(.secondary)
-                            Text("No tracks found")
-                                .foregroundColor(.secondary)
-                        }
-                        .padding()
+                        noResultsView
                     } else {
-                        List {
-                            ForEach(filteredTracks, id: \.self) { url in
-                                Button(action: { player.play(url: url) }) {
-                                    HStack {
-                                        Image(systemName: "music.note")
-                                        Text(url.lastPathComponent)
-                                            .lineLimit(1)
-                                    }
-                                }
-                            }
-                            .onDelete { indices in
-                                for index in indices.sorted(by: >) {
-                                    if let trackIndex = player.tracks.firstIndex(of: filteredTracks[index]) {
-                                        player.tracks.remove(at: trackIndex)
-                                    }
-                                }
-                            }
-                            .onMove { indices, destination in
-                                player.tracks.move(fromOffsets: indices, toOffset: destination)
-                            }
-                        }
+                        trackListView
                     }
                 }
 
+                Divider()
+
                 PlayerView()
                     .environmentObject(player)
+                    .background(Color(UIColor.secondarySystemBackground))
             }
             .navigationTitle("Offline Music")
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: { showingImporter = true }) {
-                        Image(systemName: "square.and.arrow.down")
+                        Label("Import", systemImage: "square.and.arrow.down")
                     }
+                }
+
+                ToolbarItem(placement: .navigationBarLeading) {
+                    EditButton()
+                        .disabled(player.tracks.isEmpty)
                 }
             }
         }
         .sheet(isPresented: $showingImporter) {
             DocumentPicker { urls in
-                player.add(urls: urls)
+                // Fixed: Use importTracks instead of add
+                player.importTracks(urls: urls)
                 showingImporter = false
             }
         }
     }
-}
 
-#if DEBUG
-struct ContentView_Previews: PreviewProvider {
-    static var previews: some View {
-        ContentView()
+    // MARK: - Subviews
+    private var emptyStateView: some View {
+        VStack(spacing: 20) {
+            Spacer()
+
+            Image(systemName: "music.note.list")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 100, height: 100)
+                .foregroundStyle(.tint)
+                .padding()
+
+            Text("No Tracks")
+                .font(.title2)
+                .fontWeight(.semibold)
+
+            Text("Import audio files to start listening.\nYou can also share audio files from other apps.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+
+            Button(action: { showingImporter = true }) {
+                Label("Import Audio Files", systemImage: "square.and.arrow.down")
+                    .padding()
+                    .background(Color.accentColor)
+                    .foregroundColor(.white)
+                    .cornerRadius(10)
+            }
+            .padding(.top)
+
+            Spacer()
+        }
+    }
+
+    private var noResultsView: some View {
+        VStack(spacing: 16) {
+            Spacer()
+
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 50))
+                .foregroundColor(.secondary)
+
+            Text("No Tracks Found")
+                .font(.headline)
+                .foregroundColor(.secondary)
+
+            Text("Try adjusting your search")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+
+            Spacer()
+        }
+        .padding()
+    }
+
+    private var trackListView: some View {
+        List {
+            ForEach(filteredTracks, id: \.self) { url in
+                TrackRow(
+                    url: url,
+                    isPlaying: player.currentURL == url,
+                    onTap: { player.play(url: url) }
+                )
+            }
+            .onDelete { indices in
+                deleteItems(at: indices)
+            }
+            .onMove { indices, destination in
+                // Find actual indices in the full track list
+                let tracksToMove = indices.map { filteredTracks[$0] }
+                var newTracks = player.tracks
+
+                // Remove tracks from current positions
+                newTracks.removeAll { tracksToMove.contains($0) }
+
+                // Insert at new position
+                let insertIndex = min(destination, newTracks.count)
+                newTracks.insert(contentsOf: tracksToMove, at: insertIndex)
+
+                player.tracks = newTracks
+            }
+        }
+        .listStyle(PlainListStyle())
+    }
+
+    // MARK: - Helper Methods
+    private func deleteItems(at offsets: IndexSet) {
+        // Convert filtered indices to actual track indices
+        let tracksToDelete = offsets.map { filteredTracks[$0] }
+        let actualIndices = IndexSet(tracksToDelete.compactMap { player.tracks.firstIndex(of: $0) })
+        player.remove(atOffsets: actualIndices)
     }
 }
-#endif
 
+// MARK: - TrackRow
+struct TrackRow: View {
+    let url: URL
+    let isPlaying: Bool
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 12) {
+                // Playing indicator
+                if isPlaying {
+                    Image(systemName: "waveform")
+                        .foregroundColor(.accentColor)
+                        .imageScale(.medium)
+                        .frame(width: 24)
+                } else {
+                    Image(systemName: "music.note")
+                        .foregroundColor(.secondary)
+                        .imageScale(.medium)
+                        .frame(width: 24)
+                }
+
+                // Track info
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(url.deletingPathExtension().lastPathComponent)
+                        .lineLimit(2)
+                        .fontWeight(isPlaying ? .semibold : .regular)
+                        .foregroundColor(isPlaying ? .accentColor : .primary)
+
+                    Text(url.pathExtension.uppercased())
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                // Chevron
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel("\(url.deletingPathExtension().lastPathComponent), \(isPlaying ? "now playing" : "tap to play")")
+    }
+}
+
+// MARK: - SearchBar
 struct SearchBar: View {
     @Binding var text: String
 
     var body: some View {
-        HStack {
-            Image(systemName: "magnifyingglass")
-                .foregroundColor(.gray)
+        HStack(spacing: 12) {
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
 
-            TextField("Search tracks...", text: $text)
-                .textFieldStyle(RoundedBorderTextFieldStyle())
+                TextField("Search tracks...", text: $text)
+                    .textFieldStyle(PlainTextFieldStyle())
+                    .autocapitalization(.none)
+                    .disableAutocorrection(true)
 
-            if !text.isEmpty {
-                Button(action: { text = "" }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.gray)
+                if !text.isEmpty {
+                    Button(action: { text = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(PlainButtonStyle())
                 }
             }
+            .padding(8)
+            .background(Color(UIColor.secondarySystemBackground))
+            .cornerRadius(10)
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
     }
 }
+
+// MARK: - Previews
+#if DEBUG
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        ContentView()
+            .environmentObject(AudioPlayer())
+    }
+}
+#endif

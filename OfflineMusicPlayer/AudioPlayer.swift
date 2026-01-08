@@ -1,8 +1,11 @@
 import Foundation
 import AVFoundation
 import Combine
+import MediaPlayer
+import CryptoKit
 
 final class AudioPlayer: NSObject, ObservableObject {
+    // MARK: - Published Properties
     @Published var isPlaying: Bool = false
     @Published var currentURL: URL?
     @Published var currentTrackIndex: Int = -1
@@ -12,225 +15,496 @@ final class AudioPlayer: NSObject, ObservableObject {
         didSet { saveTracks() }
     }
 
+    // MARK: - Private Properties
     private var audioPlayer: AVAudioPlayer?
     private var timer: Timer?
     private var currentSecurityURL: URL?
     private var isAccessingSecurityResource: Bool = false
-    private var bookmarks: [String: Data] = [:] // Store security scope bookmarks by filename
+    private var bookmarks: [String: Data] = [:]
     private let bookmarksKey = "audioFileBookmarks"
-    private var fileHashes: [String: String] = [:] // Store file hashes to detect duplicates
+    private var fileHashes: [String: String] = [:]
     private let fileHashesKey = "audioFileHashes"
 
+    // MARK: - Initialization
     override init() {
         super.init()
         setupAudioSession()
+        setupRemoteCommands()
+        setupNotifications()
         loadBookmarks()
         loadFileHashes()
-        // Load saved tracks off the main thread to avoid blocking UI
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             self?.loadTracks()
         }
     }
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+        if let url = currentSecurityURL, isAccessingSecurityResource {
+            url.stopAccessingSecurityScopedResource()
+        }
+    }
+
+    // MARK: - Audio Session Setup (FIXED)
     private func setupAudioSession() {
-        do {
-            let audioSession = AVAudioSession.sharedInstance()
-            try audioSession.setCategory(.playback, mode: .default, options: [.duckOthers])
-            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
-        } catch {
-            print("AudioPlayer: failed to setup audio session ", error)
-        }
-    }
-
-    private func calculateFileHash(_ url: URL) -> String? {
-        let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: url.path) else { return nil }
+        let audioSession = AVAudioSession.sharedInstance()
         
         do {
-            let fileAttributes = try fileManager.attributesOfItem(atPath: url.path)
-            let fileSize = fileAttributes[.size] as? NSNumber ?? 0
-            let modificationDate = fileAttributes[.modificationDate] as? Date ?? Date()
-            let hash = "\(fileSize)-\(modificationDate.timeIntervalSince1970)"
-            return hash
+            // FIXED: Use minimal, compatible options
+            // Removed .duckOthers which causes -50 error on some iOS versions
+            try audioSession.setCategory(
+                .playback,
+                mode: .default,
+                options: []  // Empty options - most compatible
+            )
+            
+            try audioSession.setActive(true)
+            
+            print("AudioPlayer: ✅ Audio session configured successfully")
         } catch {
-            print("AudioPlayer: failed to calculate hash for \(url.lastPathComponent) - \(error)")
-            return nil
+            print("AudioPlayer: ⚠️ Audio session setup failed - \(error.localizedDescription)")
+            
+            // Secondary fallback: Try with minimum configuration
+            do {
+                try audioSession.setCategory(.playback)
+                try audioSession.setActive(true)
+                print("AudioPlayer: ✅ Fallback audio session activated")
+            } catch {
+                print("AudioPlayer: ❌ All audio session configurations failed")
+            }
         }
     }
 
-    private func isDuplicate(url: URL) -> Bool {
-        guard let hash = calculateFileHash(url) else { return false }
+    // MARK: - Remote Command Center (Lock Screen Controls)
+    private func setupRemoteCommands() {
+        let commandCenter = MPRemoteCommandCenter.shared()
+
+        // Play command
+        commandCenter.playCommand.isEnabled = true
+        commandCenter.playCommand.addTarget { [weak self] _ in
+            guard let self = self else { return .commandFailed }
+            if let player = self.audioPlayer, !player.isPlaying {
+                player.play()
+                self.isPlaying = true
+                self.startTimer()
+                self.updateNowPlayingInfo()
+                return .success
+            }
+            return .commandFailed
+        }
+
+        // Pause command
+        commandCenter.pauseCommand.isEnabled = true
+        commandCenter.pauseCommand.addTarget { [weak self] _ in
+            self?.pause()
+            return .success
+        }
+
+        // Toggle play/pause command
+        commandCenter.togglePlayPauseCommand.isEnabled = true
+        commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
+            self?.togglePlayPause()
+            return .success
+        }
+
+        // Next track command
+        commandCenter.nextTrackCommand.isEnabled = true
+        commandCenter.nextTrackCommand.addTarget { [weak self] _ in
+            self?.nextTrack()
+            return .success
+        }
+
+        // Previous track command
+        commandCenter.previousTrackCommand.isEnabled = true
+        commandCenter.previousTrackCommand.addTarget { [weak self] _ in
+            self?.previousTrack()
+            return .success
+        }
+
+        // Seek commands
+        commandCenter.changePlaybackPositionCommand.isEnabled = true
+        commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let self = self,
+                  let event = event as? MPChangePlaybackPositionCommandEvent else {
+                return .commandFailed
+            }
+            self.seek(to: event.positionTime)
+            return .success
+        }
+
+        // Skip forward/backward commands (15 seconds)
+        commandCenter.skipForwardCommand.isEnabled = true
+        commandCenter.skipForwardCommand.preferredIntervals = [15]
+        commandCenter.skipForwardCommand.addTarget { [weak self] event in
+            guard let self = self,
+                  let command = event.command as? MPSkipIntervalCommand,
+                  let player = self.audioPlayer else {
+                return .commandFailed
+            }
+            let newTime = min(player.currentTime + Double(truncating: command.preferredIntervals[0]), player.duration)
+            self.seek(to: newTime)
+            return .success
+        }
+
+        commandCenter.skipBackwardCommand.isEnabled = true
+        commandCenter.skipBackwardCommand.preferredIntervals = [15]
+        commandCenter.skipBackwardCommand.addTarget { [weak self] event in
+            guard let self = self,
+                  let command = event.command as? MPSkipIntervalCommand,
+                  let player = self.audioPlayer else {
+                return .commandFailed
+            }
+            let newTime = max(player.currentTime - Double(truncating: command.preferredIntervals[0]), 0)
+            self.seek(to: newTime)
+            return .success
+        }
+
+        print("AudioPlayer: Remote commands configured")
+    }
+
+    // MARK: - Notifications
+    private func setupNotifications() {
+        // Audio interruptions (calls, alarms, etc.)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleInterruption),
+            name: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance()
+        )
+
+        // Route changes (headphones plugged/unplugged)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleRouteChange),
+            name: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance()
+        )
+    }
+
+    @objc private func handleInterruption(notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
+            return
+        }
+
+        switch type {
+        case .began:
+            pause()
+            print("AudioPlayer: Audio interrupted")
+
+        case .ended:
+            guard let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt else {
+                return
+            }
+            let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+
+            if options.contains(.shouldResume) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    guard let self = self, let player = self.audioPlayer else { return }
+                    player.play()
+                    self.isPlaying = true
+                    self.startTimer()
+                    self.updateNowPlayingInfo()
+                    print("AudioPlayer: Resuming after interruption")
+                }
+            }
+
+        @unknown default:
+            break
+        }
+    }
+
+    @objc private func handleRouteChange(notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else {
+            return
+        }
+
+        switch reason {
+        case .oldDeviceUnavailable:
+            pause()
+            print("AudioPlayer: Audio device disconnected - pausing")
+
+        case .newDeviceAvailable:
+            print("AudioPlayer: New audio device connected")
+
+        default:
+            break
+        }
+    }
+
+    // MARK: - Now Playing Info (FIXED for MSVEntitlementUtilities warning)
+    private func updateNowPlayingInfo() {
+        guard let url = currentURL else {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            return
+        }
+
+        var nowPlayingInfo = [String: Any]()
+        let trackTitle = url.deletingPathExtension().lastPathComponent
         
-        // Check if this hash already exists in our library
-        for (_, existingHash) in fileHashes {
-            if hash == existingHash {
-                return true
-            }
+        nowPlayingInfo[MPMediaItemPropertyTitle] = trackTitle
+        nowPlayingInfo[MPMediaItemPropertyArtist] = "Offline Music Player"
+        nowPlayingInfo[MPMediaItemPropertyAlbumTitle] = "Local Library"
+
+        if let player = audioPlayer {
+            nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = player.duration
+            nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = player.currentTime
+            nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = player.isPlaying ? 1.0 : 0.0
         }
-        return false
+
+        // FIXED: Generate proper artwork to eliminate MSVEntitlementUtilities warning
+        nowPlayingInfo[MPMediaItemPropertyArtwork] = createProperArtwork()
+
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+        print("AudioPlayer: Updated Now Playing info for '\(trackTitle)'")
     }
 
-    func add(urls: [URL]) {
-        // Copy picked files into app container (avoids security-scope on iOS)
-        let fileManager = FileManager.default
-        let importDir: URL = {
-            let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
-            let dir = docs.appendingPathComponent("ImportedAudio", isDirectory: true)
-            if !fileManager.fileExists(atPath: dir.path) {
-                try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
+    // MARK: - Proper Artwork Generation (FIXED)
+    private func createProperArtwork() -> MPMediaItemArtwork {
+        // Create artwork with standard size and proper rendering
+        let artworkSize = CGSize(width: 512, height: 512)
+        
+        return MPMediaItemArtwork(boundsSize: artworkSize) { size in
+            // Use UIGraphicsImageRenderer for proper iOS rendering context
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1.0
+            format.opaque = true
+            
+            let renderer = UIGraphicsImageRenderer(size: size, format: format)
+            
+            return renderer.image { context in
+                let rect = CGRect(origin: .zero, size: size)
+                
+                // Background gradient
+                let colorSpace = CGColorSpaceCreateDeviceRGB()
+                let colors = [
+                    UIColor.systemIndigo.cgColor,
+                    UIColor.systemPurple.cgColor
+                ] as CFArray
+                
+                if let gradient = CGGradient(
+                    colorsSpace: colorSpace,
+                    colors: colors,
+                    locations: [0.0, 1.0]
+                ) {
+                    context.cgContext.drawLinearGradient(
+                        gradient,
+                        start: CGPoint(x: 0, y: 0),
+                        end: CGPoint(x: size.width, y: size.height),
+                        options: []
+                    )
+                }
+                
+                // Music icon
+                let iconSize = size.width * 0.4
+                let symbolConfig = UIImage.SymbolConfiguration(
+                    pointSize: iconSize,
+                    weight: .thin
+                )
+                
+                if let musicIcon = UIImage(systemName: "music.note", withConfiguration: symbolConfig) {
+                    let iconRect = CGRect(
+                        x: (size.width - iconSize) / 2,
+                        y: (size.height - iconSize) / 2,
+                        width: iconSize,
+                        height: iconSize
+                    )
+                    
+                    // Draw with white color
+                    UIColor.white.withAlphaComponent(0.85).setFill()
+                    musicIcon.draw(in: iconRect, blendMode: .normal, alpha: 0.85)
+                }
             }
-            return dir
-        }()
+        }
+    }
+
+    // MARK: - Playback Controls
+    func togglePlayPause() {
+        guard let player = audioPlayer else { return }
+
+        if player.isPlaying {
+            pause()
+        } else {
+            player.play()
+            isPlaying = true
+            startTimer()
+            updateNowPlayingInfo()
+        }
+    }
+
+    func pause() {
+        audioPlayer?.pause()
+        isPlaying = false
+        stopTimer()
+        updateNowPlayingInfo()
+    }
+
+    func seek(to time: TimeInterval) {
+        guard let player = audioPlayer else { return }
+        player.currentTime = max(0, min(time, player.duration))
+        progress = player.currentTime
+        updateNowPlayingInfo()
+    }
+
+    func nextTrack() {
+        guard !tracks.isEmpty else { return }
+        currentTrackIndex = (currentTrackIndex + 1) % tracks.count
+        play(url: tracks[currentTrackIndex])
+    }
+
+    func previousTrack() {
+        guard !tracks.isEmpty else { return }
+        currentTrackIndex = currentTrackIndex > 0 ? currentTrackIndex - 1 : tracks.count - 1
+        play(url: tracks[currentTrackIndex])
+    }
+
+    // MARK: - Track Management
+    func remove(atOffsets offsets: IndexSet) {
+        let tracksToRemove = offsets.map { tracks[$0] }
+
+        for url in tracksToRemove {
+            removeTrack(url: url)
+        }
+
+        tracks.remove(atOffsets: offsets)
+
+        if let currentURL = currentURL, !tracks.contains(currentURL) {
+            stop()
+        } else if let currentURL = currentURL, let newIndex = tracks.firstIndex(of: currentURL) {
+            currentTrackIndex = newIndex
+        }
+    }
+
+    private func stop() {
+        audioPlayer?.stop()
+        audioPlayer = nil
+        isPlaying = false
+        currentURL = nil
+        currentTrackIndex = -1
+        progress = 0
+        duration = 0
+        stopTimer()
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+
+        if let url = currentSecurityURL, isAccessingSecurityResource {
+            url.stopAccessingSecurityScopedResource()
+            isAccessingSecurityResource = false
+            currentSecurityURL = nil
+        }
+    }
+
+    // MARK: - File Import (FIXED hash calculation position)
+    func importTracks(urls: [URL]) {
+        let fileManager = FileManager.default
+        guard let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            print("AudioPlayer: Could not access documents directory")
+            return
+        }
+
+        let importDir = documentsURL.appendingPathComponent("ImportedAudio")
+
+        if !fileManager.fileExists(atPath: importDir.path) {
+            do {
+                try fileManager.createDirectory(at: importDir, withIntermediateDirectories: true)
+            } catch {
+                print("AudioPlayer: Failed to create import directory - \(error)")
+                return
+            }
+        }
+
+        var addedCount = 0
+        var skippedCount = 0
 
         for url in urls {
-            // Check for duplicates BEFORE copying
-            if isDuplicate(url: url) {
-                print("AudioPlayer: duplicate file detected - skipping \(url.lastPathComponent)")
+            // Start accessing BEFORE calculating hash
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer {
+                if accessing {
+                    url.stopAccessingSecurityScopedResource()
+                }
+            }
+
+            // Calculate hash of incoming file
+            guard let incomingHash = calculateFileHash(url) else {
+                print("AudioPlayer: Could not calculate hash for \(url.lastPathComponent)")
                 continue
             }
-            
-            // Sanitize filename by removing problematic characters (pipe, etc.)
-            let sanitizedFileName = url.lastPathComponent
-                .replacingOccurrences(of: "|", with: "-")
+
+            // Check for duplicates
+            if fileHashes.values.contains(incomingHash) {
+                print("AudioPlayer: Skipping duplicate file \(url.lastPathComponent)")
+                skippedCount += 1
+                continue
+            }
+
+            // Generate unique filename
+            var sanitizedFileName = url.lastPathComponent
                 .replacingOccurrences(of: "/", with: "-")
-                .replacingOccurrences(of: "\0", with: "")
-            
-            // ensure unique destination filename
-            var dest = importDir.appendingPathComponent(sanitizedFileName)
+                .replacingOccurrences(of: ":", with: "-")
+
+            var destURL = importDir.appendingPathComponent(sanitizedFileName)
             var counter = 1
-            while fileManager.fileExists(atPath: dest.path) {
-                let base = URL(fileURLWithPath: sanitizedFileName).deletingPathExtension().lastPathComponent
+
+            while fileManager.fileExists(atPath: destURL.path) {
+                let nameWithoutExt = URL(fileURLWithPath: sanitizedFileName).deletingPathExtension().lastPathComponent
                 let ext = URL(fileURLWithPath: sanitizedFileName).pathExtension
-                let newName = "\(base) - \(counter)\(ext.isEmpty ? "" : ".\(ext)")"
-                dest = importDir.appendingPathComponent(newName)
+                let uniqueName = "\(nameWithoutExt)_\(counter).\(ext)"
+                destURL = importDir.appendingPathComponent(uniqueName)
                 counter += 1
             }
 
-            DispatchQueue.global(qos: .userInitiated).async {
-                // Start accessing security-scoped resource FIRST
-                let shouldStopAccessing = url.startAccessingSecurityScopedResource()
-                defer {
-                    if shouldStopAccessing {
-                        url.stopAccessingSecurityScopedResource()
-                    }
+            do {
+                guard fileManager.fileExists(atPath: url.path) else {
+                    print("AudioPlayer: Source file not accessible at \(url.path)")
+                    continue
                 }
-                
-                do {
-                    // Verify file exists before copying
-                    guard fileManager.fileExists(atPath: url.path) else {
-                        print("AudioPlayer: source file not accessible at \(url.path)")
-                        return
-                    }
-                    
-                    // Copy the file into app container
-                    try fileManager.copyItem(at: url, to: dest)
-                    
-                    // Store the file hash to detect duplicates
-                    if let hash = self.calculateFileHash(dest) {
-                        DispatchQueue.main.async {
-                            self.fileHashes[dest.lastPathComponent] = hash
-                            self.saveFileHashes()
-                        }
-                    }
-                    
-                    DispatchQueue.main.async {
-                        if !self.tracks.contains(dest) {
-                            self.tracks.append(dest)
-                        }
-                    }
-                    print("AudioPlayer: successfully copied file to \(dest.lastPathComponent)")
-                } catch {
-                    print("AudioPlayer: failed to copy file \(url) -> \(dest): \(error)")
+
+                try fileManager.copyItem(at: url, to: destURL)
+
+                // Store hash for the destination file
+                fileHashes[destURL.lastPathComponent] = incomingHash
+
+                DispatchQueue.main.async {
+                    self.tracks.append(destURL)
                 }
+
+                addedCount += 1
+                print("AudioPlayer: Added track \(destURL.lastPathComponent)")
+            } catch {
+                print("AudioPlayer: Failed to copy \(url.lastPathComponent) - \(error.localizedDescription)")
             }
         }
-    }
-    
-    private func storeBookmark(for url: URL) {
-        #if os(macOS)
-        do {
-            let bookmark = try url.bookmarkData(options: [.minimalBookmark, .withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
-            let fileName = url.lastPathComponent
-            bookmarks[fileName] = bookmark
-            saveBookmarks()
-        } catch {
-            print("AudioPlayer: failed to create bookmark for \(url.lastPathComponent) - \(error)")
-        }
-        #endif
-    }
-    
-    private func resolveURL(fileName: String) -> URL? {
-        #if os(macOS)
-        guard let bookmark = bookmarks[fileName] else {
-            print("AudioPlayer: no bookmark found for \(fileName)")
-            return nil
+
+        if addedCount > 0 {
+            saveFileHashes()
         }
 
-        do {
-            var isStale = false
-            let resolvedURL = try URL(resolvingBookmarkData: bookmark, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale)
-
-            if isStale {
-                print("AudioPlayer: bookmark is stale for \(fileName), refreshing...")
-                let fileManager = FileManager.default
-                if fileManager.fileExists(atPath: resolvedURL.path) {
-                    storeBookmark(for: resolvedURL)
-                }
-            }
-
-            return resolvedURL
-        } catch {
-            print("AudioPlayer: failed to resolve bookmark for \(fileName) - \(error)")
-            return nil
-        }
-        #else
-        // On iOS we store copied files in app container; try to find by filename
-        let fileManager = FileManager.default
-        if let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first {
-            let candidate = docs.appendingPathComponent("ImportedAudio/").appendingPathComponent(fileName)
-            if fileManager.fileExists(atPath: candidate.path) {
-                return candidate
-            }
-        }
-        print("AudioPlayer: no local copy found for \(fileName)")
-        return nil
-        #endif
+        print("AudioPlayer: Import complete - Added: \(addedCount), Skipped: \(skippedCount)")
     }
 
     func play(url: URL) {
         let fileName = url.lastPathComponent
-        
-        // Stop accessing previous security-scoped resource
+
         if let previousURL = currentSecurityURL, isAccessingSecurityResource {
             previousURL.stopAccessingSecurityScopedResource()
             isAccessingSecurityResource = false
         }
-        // Resolve file URL (bookmarks on macOS, local copy on iOS)
+
         guard let resolvedURL = resolveURL(fileName: fileName) else {
-            print("AudioPlayer: could not resolve URL for \(fileName)")
+            print("AudioPlayer: Could not resolve URL for \(fileName)")
             removeTrack(url: url)
             return
         }
 
-        // Perform file I/O off the main thread
         DispatchQueue.global(qos: .userInitiated).async {
             let fileManager = FileManager.default
 
-            #if os(macOS)
-            // For macOS, handle security-scoped access
-            var shouldStopAccessing = false
-            if resolvedURL.startAccessingSecurityScopedResource() {
-                shouldStopAccessing = true
-            }
-            #endif
-
             guard fileManager.fileExists(atPath: resolvedURL.path) else {
-                print("AudioPlayer: file not found at path \(resolvedURL.path)")
-                #if os(macOS)
-                if shouldStopAccessing {
-                    resolvedURL.stopAccessingSecurityScopedResource()
-                }
-                #endif
+                print("AudioPlayer: File not found at path \(resolvedURL.path)")
                 DispatchQueue.main.async { self.removeTrack(url: url) }
                 return
             }
@@ -246,73 +520,70 @@ final class AudioPlayer: NSObject, ObservableObject {
                         self.audioPlayer?.prepareToPlay()
                         self.audioPlayer?.play()
 
-                        // Keep track of security-scoped URL for cleanup (macOS only)
-                        #if os(macOS)
-                        self.currentSecurityURL = resolvedURL
-                        self.isAccessingSecurityResource = shouldStopAccessing
-                        #else
-                        self.currentSecurityURL = nil
-                        self.isAccessingSecurityResource = false
-                        #endif
-
                         self.currentURL = url
                         self.currentTrackIndex = self.tracks.firstIndex(of: url) ?? -1
-                        self.duration = self.audioPlayer?.duration ?? 0
                         self.isPlaying = true
-                        self.startTimer()
+                        self.duration = self.audioPlayer?.duration ?? 0
 
-                        print("AudioPlayer: successfully playing \(fileName)")
+                        self.currentSecurityURL = resolvedURL
+                        self.isAccessingSecurityResource = false
+
+                        self.startTimer()
+                        self.updateNowPlayingInfo()
+
+                        print("AudioPlayer: Successfully playing \(fileName)")
                     } catch {
-                        print("AudioPlayer: failed to initialize player for \(fileName) - \(error)")
-                        // Release security access if initialization failed
-                        #if os(macOS)
-                        if shouldStopAccessing {
-                            resolvedURL.stopAccessingSecurityScopedResource()
-                        }
-                        #endif
-                        self.removeTrack(url: url)
+                        print("AudioPlayer: Failed to create audio player for \(fileName) - \(error.localizedDescription)")
                     }
                 }
             } catch {
-                print("AudioPlayer: failed to read file data for \(fileName) - \(error)")
-                #if os(macOS)
-                if shouldStopAccessing {
-                    resolvedURL.stopAccessingSecurityScopedResource()
-                }
-                #endif
-                DispatchQueue.main.async { self.removeTrack(url: url) }
+                print("AudioPlayer: Failed to read file data for \(fileName) - \(error.localizedDescription)")
             }
         }
     }
-    
+
+    // MARK: - Helper Methods
     private func removeTrack(url: URL) {
         let fileName = url.lastPathComponent
+
         if let index = tracks.firstIndex(of: url) {
             tracks.remove(at: index)
-            // Remove associated bookmark (macOS)
-            #if os(macOS)
-            bookmarks.removeValue(forKey: fileName)
-            saveBookmarks()
-            #endif
-            
-            // Remove associated file hash
-            fileHashes.removeValue(forKey: fileName)
-            saveFileHashes()
+        }
 
-            // If file exists in app container, delete it asynchronously
-            let fileManager = FileManager.default
-            DispatchQueue.global(qos: .utility).async {
-                if fileManager.fileExists(atPath: url.path) {
-                    do {
-                        try fileManager.removeItem(at: url)
-                        print("AudioPlayer: deleted local file \(fileName)")
-                    } catch {
-                        print("AudioPlayer: failed to delete local file \(fileName) - \(error)")
-                    }
+        bookmarks.removeValue(forKey: fileName)
+        saveBookmarks()
+
+        fileHashes.removeValue(forKey: fileName)
+        saveFileHashes()
+
+        let fileManager = FileManager.default
+        if let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let importDir = documentsURL.appendingPathComponent("ImportedAudio")
+            let fileURL = importDir.appendingPathComponent(fileName)
+
+            if fileManager.fileExists(atPath: fileURL.path) {
+                do {
+                    try fileManager.removeItem(at: fileURL)
+                    print("AudioPlayer: Deleted file \(fileName)")
+                } catch {
+                    print("AudioPlayer: Failed to delete file \(fileName) - \(error)")
                 }
             }
-            print("AudioPlayer: removed track \(fileName)")
         }
+
+        print("AudioPlayer: Removed track \(fileName)")
+    }
+
+    private func resolveURL(fileName: String) -> URL? {
+        let fileManager = FileManager.default
+        if let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let candidate = docs.appendingPathComponent("ImportedAudio").appendingPathComponent(fileName)
+            if fileManager.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+        }
+        print("AudioPlayer: No local copy found for \(fileName)")
+        return nil
     }
 
     private func getFileTypeHint(for url: URL) -> String? {
@@ -335,53 +606,23 @@ final class AudioPlayer: NSObject, ObservableObject {
         case "aiff":
             return AVFileType.aiff.rawValue
         default:
-            return AVFileType.mp3.rawValue  // Default fallback
+            return AVFileType.mp3.rawValue
         }
     }
 
-    func nextTrack() {
-        guard !tracks.isEmpty else { return }
-        let nextIndex = (currentTrackIndex + 1) % tracks.count
-        play(url: tracks[nextIndex])
-    }
-
-    func previousTrack() {
-        guard !tracks.isEmpty else { return }
-        let prevIndex = currentTrackIndex > 0 ? currentTrackIndex - 1 : tracks.count - 1
-        play(url: tracks[prevIndex])
-    }
-
-    func pause() {
-        audioPlayer?.pause()
-        isPlaying = false
-        stopTimer()
-    }
-
-    func togglePlayPause() {
-        guard let player = audioPlayer else { return }
-        if player.isPlaying {
-            pause()
-        } else {
-            player.play()
-            isPlaying = true
-            startTimer()
+    // MARK: - File Hash Calculation
+    private func calculateFileHash(_ url: URL) -> String? {
+        do {
+            let fileData = try Data(contentsOf: url)
+            let hash = SHA256.hash(data: fileData)
+            return hash.compactMap { String(format: "%02x", $0) }.joined()
+        } catch {
+            print("AudioPlayer: Failed to calculate hash for \(url.lastPathComponent) - \(error)")
+            return nil
         }
     }
 
-    func seek(to seconds: Double) {
-        guard let player = audioPlayer else { return }
-        player.currentTime = seconds
-        updateProgress()
-    }
-
-    func remove(atOffsets offsets: IndexSet) {
-        tracks.remove(atOffsets: offsets)
-    }
-    
-    func move(fromOffsets offsets: IndexSet, toOffset offset: Int) {
-        tracks.move(fromOffsets: offsets, toOffset: offset)
-    }
-
+    // MARK: - Timer Management
     private func startTimer() {
         stopTimer()
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
@@ -406,68 +647,73 @@ final class AudioPlayer: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - Persistence
     private func saveTracks() {
-        // Save track filenames to allow recovery
         let fileNames = tracks.map { $0.lastPathComponent }
-        UserDefaults.standard.set(fileNames, forKey: "savedTrackNames")
+        UserDefaults.standard.set(fileNames, forKey: "savedTracks")
     }
 
     private func loadTracks() {
-        var resolvedURLs: [URL] = []
-        if let fileNames = UserDefaults.standard.stringArray(forKey: "savedTrackNames") {
-            // Try to reconstruct URLs from bookmarks or local copies
-            for fileName in fileNames {
-                if let resolvedURL = resolveURL(fileName: fileName) {
-                    resolvedURLs.append(resolvedURL)
-                }
+        guard let fileNames = UserDefaults.standard.array(forKey: "savedTracks") as? [String] else {
+            print("AudioPlayer: Loaded 0 tracks")
+            return
+        }
+
+        let fileManager = FileManager.default
+        guard let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return
+        }
+
+        let importDir = documentsURL.appendingPathComponent("ImportedAudio")
+        var loadedTracks: [URL] = []
+
+        for fileName in fileNames {
+            let fileURL = importDir.appendingPathComponent(fileName)
+            if fileManager.fileExists(atPath: fileURL.path) {
+                loadedTracks.append(fileURL)
+            } else {
+                print("AudioPlayer: Track not found: \(fileName)")
             }
         }
 
-        if !resolvedURLs.isEmpty {
-            DispatchQueue.main.async {
-                for url in resolvedURLs where !self.tracks.contains(url) {
-                    self.tracks.append(url)
-                }
-            }
+        DispatchQueue.main.async {
+            self.tracks = loadedTracks
+            print("AudioPlayer: Loaded \(loadedTracks.count) tracks")
         }
     }
-    
+
     private func saveBookmarks() {
         UserDefaults.standard.set(bookmarks, forKey: bookmarksKey)
     }
-    
+
     private func loadBookmarks() {
-        if let stored = UserDefaults.standard.dictionary(forKey: bookmarksKey) as? [String: Data] {
-            bookmarks = stored
+        if let saved = UserDefaults.standard.dictionary(forKey: bookmarksKey) as? [String: Data] {
+            bookmarks = saved
         }
     }
-    
+
     private func saveFileHashes() {
         UserDefaults.standard.set(fileHashes, forKey: fileHashesKey)
     }
-    
+
     private func loadFileHashes() {
-        if let stored = UserDefaults.standard.dictionary(forKey: fileHashesKey) as? [String: String] {
-            fileHashes = stored
-        }
-    }
-    
-    deinit {
-        // Clean up security-scoped resource access
-        if let url = currentSecurityURL, isAccessingSecurityResource {
-            url.stopAccessingSecurityScopedResource()
+        if let saved = UserDefaults.standard.dictionary(forKey: fileHashesKey) as? [String: String] {
+            fileHashes = saved
         }
     }
 }
 
+// MARK: - AVAudioPlayerDelegate
 extension AudioPlayer: AVAudioPlayerDelegate {
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        // Release security access when playback finishes
-        if let url = currentSecurityURL, isAccessingSecurityResource {
-            url.stopAccessingSecurityScopedResource()
-            isAccessingSecurityResource = false
-            currentSecurityURL = nil
+        if flag {
+            nextTrack()
         }
-        nextTrack()
+    }
+
+    func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+        print("AudioPlayer: Decode error - \(error?.localizedDescription ?? "unknown")")
+        isPlaying = false
+        stopTimer()
     }
 }
