@@ -277,7 +277,7 @@ final class AudioPlayer: NSObject, ObservableObject {
             let renderer = UIGraphicsImageRenderer(size: size, format: format)
             
             return renderer.image { context in
-                let rect = CGRect(origin: .zero, size: size)
+                _ = CGRect(origin: .zero, size: size)
                 
                 // Background gradient
                 let colorSpace = CGColorSpaceCreateDeviceRGB()
@@ -442,7 +442,7 @@ final class AudioPlayer: NSObject, ObservableObject {
             }
 
             // Generate unique filename
-            var sanitizedFileName = url.lastPathComponent
+            let sanitizedFileName = url.lastPathComponent
                 .replacingOccurrences(of: "/", with: "-")
                 .replacingOccurrences(of: ":", with: "-")
 
