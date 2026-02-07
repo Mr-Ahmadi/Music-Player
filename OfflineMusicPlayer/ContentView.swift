@@ -4,6 +4,7 @@ struct ContentView: View {
     @EnvironmentObject var player: AudioPlayer
     @State private var showingImporter = false
     @State private var searchText = ""
+    @State private var shareURL: ShareableURLWrapper?
 
     var filteredTracks: [URL] {
         if searchText.isEmpty {
@@ -52,11 +53,18 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showingImporter) {
             DocumentPicker { urls in
-                // Fixed: Use importTracks instead of add
                 player.importTracks(urls: urls)
                 showingImporter = false
             }
         }
+        .sheet(item: $shareURL) { wrapper in
+            ShareSheet(items: [wrapper.url])
+        }
+    }
+    
+    private func presentShareSheet(for trackURL: URL) {
+        guard let resolved = player.resolvedURL(for: trackURL) else { return }
+        shareURL = ShareableURLWrapper(url: resolved)
     }
 
     // MARK: - Subviews
@@ -75,7 +83,7 @@ struct ContentView: View {
                 .font(.title2)
                 .fontWeight(.semibold)
 
-            Text("Import audio files to start listening.\nYou can also share audio files from other apps.")
+            Text("Import audio files to start listening.\n\nTip: Share music from Telegram, Files, or other apps—tap \"Open in Offline Music Player\". You’ll be asked whether to keep each track in your library.")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
@@ -121,7 +129,8 @@ struct ContentView: View {
                 TrackRow(
                     url: url,
                     isPlaying: player.currentURL == url,
-                    onTap: { player.play(url: url) }
+                    onTap: { player.play(url: url) },
+                    onShare: { presentShareSheet(for: url) }
                 )
             }
             .onDelete { indices in
@@ -154,11 +163,18 @@ struct ContentView: View {
     }
 }
 
+// MARK: - Shareable URL Wrapper (for sheet binding)
+struct ShareableURLWrapper: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
 // MARK: - TrackRow
 struct TrackRow: View {
     let url: URL
     let isPlaying: Bool
     let onTap: () -> Void
+    var onShare: (() -> Void)?
 
     var body: some View {
         Button(action: onTap) {
@@ -199,6 +215,13 @@ struct TrackRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
+        .contextMenu {
+            Button {
+                onShare?()
+            } label: {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
+        }
         .accessibilityLabel("\(url.deletingPathExtension().lastPathComponent), \(isPlaying ? "now playing" : "tap to play")")
     }
 }

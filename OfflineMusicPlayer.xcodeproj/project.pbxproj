@@ -17,6 +17,10 @@
 		3959A8961E872CA300ADA57A /* AudioPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3959A8961E872CA100ADA57A /* AudioPlayer.swift */; };
 		3959A8971E872CA300ADA57A /* DocumentPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3959A8971E872CA100ADA57A /* DocumentPicker.swift */; };
 		3959A8981E872CA300ADA57A /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3959A8981E872CA100ADA57A /* PlayerView.swift */; };
+		39A1B0012F10000100000001 /* PlaybackAnalytics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0022F10000100000001 /* PlaybackAnalytics.swift */; };
+		39A1B0032F10000100000001 /* InsightsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0042F10000100000001 /* InsightsView.swift */; };
+		39A1B0052F10000100000001 /* ShareSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0062F10000100000001 /* ShareSheet.swift */; };
+		39A1B0072F10000100000001 /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0082F10000100000001 /* MainTabView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -50,6 +54,10 @@
 		3959A8961E872CA100ADA57A /* AudioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayer.swift; sourceTree = "<group>"; };
 		3959A8971E872CA100ADA57A /* DocumentPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentPicker.swift; sourceTree = "<group>"; };
 		3959A8981E872CA100ADA57A /* PlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerView.swift; sourceTree = "<group>"; };
+		39A1B0022F10000100000001 /* PlaybackAnalytics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackAnalytics.swift; sourceTree = "<group>"; };
+		39A1B0042F10000100000001 /* InsightsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightsView.swift; sourceTree = "<group>"; };
+		39A1B0062F10000100000001 /* ShareSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareSheet.swift; sourceTree = "<group>"; };
+		39A1B0082F10000100000001 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
 		39CF1C0C2F0FBDCE001C9E79 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -107,6 +115,10 @@
 				3959A8961E872CA100ADA57A /* AudioPlayer.swift */,
 				3959A8971E872CA100ADA57A /* DocumentPicker.swift */,
 				3959A8981E872CA100ADA57A /* PlayerView.swift */,
+				39A1B0022F10000100000001 /* PlaybackAnalytics.swift */,
+				39A1B0042F10000100000001 /* InsightsView.swift */,
+				39A1B0062F10000100000001 /* ShareSheet.swift */,
+				39A1B0082F10000100000001 /* MainTabView.swift */,
 				3959A87B2E872CA200ADA57A /* Assets.xcassets */,
 				3959A87D2E872CA200ADA57A /* Preview Content */,
 			);
@@ -273,6 +285,10 @@
 				3959A8961E872CA300ADA57A /* AudioPlayer.swift in Sources */,
 				3959A8971E872CA300ADA57A /* DocumentPicker.swift in Sources */,
 				3959A8981E872CA300ADA57A /* PlayerView.swift in Sources */,
+				39A1B0012F10000100000001 /* PlaybackAnalytics.swift in Sources */,
+				39A1B0032F10000100000001 /* InsightsView.swift in Sources */,
+				39A1B0052F10000100000001 /* ShareSheet.swift in Sources */,
+				39A1B0072F10000100000001 /* MainTabView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

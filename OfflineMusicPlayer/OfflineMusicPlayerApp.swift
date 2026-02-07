@@ -6,7 +6,7 @@ struct OfflineMusicPlayerApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            MainTabView()
                 .environmentObject(player)
                 .onOpenURL { url in
                     handleIncomingURL(url)
@@ -15,23 +15,15 @@ struct OfflineMusicPlayerApp: App {
     }
 
     private func handleIncomingURL(_ url: URL) {
-        // Handle shared audio files
+        // Handle shared audio files (e.g. from Telegram: Share → Open in Offline Music Player)
         print("OfflineMusicPlayerApp: Received URL - \(url)")
 
-        // Check if it's an audio file
         let supportedExtensions = ["mp3", "m4a", "wav", "aac", "flac", "ogg", "aiff", "ac3"]
         let fileExtension = url.pathExtension.lowercased()
 
         if supportedExtensions.contains(fileExtension) {
-            // Use the correct method name from AudioPlayer
-            player.importTracks(urls: [url])
-
-            // Optionally, start playing immediately
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                if let lastTrack = player.tracks.last {
-                    player.play(url: lastTrack)
-                }
-            }
+            // Ask user whether to keep the track instead of auto-importing
+            player.pendingSharedTrackURL = url
         } else {
             print("OfflineMusicPlayerApp: Unsupported file type: \(fileExtension)")
         }

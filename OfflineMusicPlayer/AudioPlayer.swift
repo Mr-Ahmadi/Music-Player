@@ -14,6 +14,8 @@ final class AudioPlayer: NSObject, ObservableObject {
     @Published var tracks: [URL] = [] {
         didSet { saveTracks() }
     }
+    /// When set, the app should show "Keep this track?" for shared audio (e.g. from Telegram).
+    @Published var pendingSharedTrackURL: URL?
 
     // MARK: - Private Properties
     private var audioPlayer: AVAudioPlayer?
@@ -486,6 +488,27 @@ final class AudioPlayer: NSObject, ObservableObject {
         print("AudioPlayer: Import complete - Added: \(addedCount), Skipped: \(skippedCount)")
     }
 
+    /// Called when user chooses "Keep" for a shared track (e.g. from Telegram). Imports and optionally plays.
+    func confirmKeepSharedTrack() {
+        guard let url = pendingSharedTrackURL else { return }
+        importTracks(urls: [url])
+        pendingSharedTrackURL = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self = self, let lastTrack = self.tracks.last else { return }
+            self.play(url: lastTrack)
+        }
+    }
+
+    /// Called when user chooses "Don't keep" or dismisses the shared-track prompt.
+    func clearPendingSharedTrack() {
+        pendingSharedTrackURL = nil
+    }
+
+    /// Resolves the file URL for a track (used for sharing)
+    func resolvedURL(for url: URL) -> URL? {
+        resolveURL(fileName: url.lastPathComponent)
+    }
+
     func play(url: URL) {
         let fileName = url.lastPathComponent
 
@@ -707,6 +730,13 @@ final class AudioPlayer: NSObject, ObservableObject {
 extension AudioPlayer: AVAudioPlayerDelegate {
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         if flag {
+            // Record playback for analytics
+            if let url = currentURL {
+                PlaybackAnalytics.shared.recordPlay(
+                    trackId: url.lastPathComponent,
+                    duration: player.duration
+                )
+            }
             nextTrack()
         }
     }
