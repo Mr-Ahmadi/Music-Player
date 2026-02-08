@@ -21,6 +21,19 @@
 		39A1B0032F10000100000001 /* InsightsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0042F10000100000001 /* InsightsView.swift */; };
 		39A1B0052F10000100000001 /* ShareSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0062F10000100000001 /* ShareSheet.swift */; };
 		39A1B0072F10000100000001 /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0082F10000100000001 /* MainTabView.swift */; };
+		39A1B0092F10000100000002 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B00A2F10000100000002 /* SettingsView.swift */; };
+		39A1B00B2F10000100000002 /* CrossfadeSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B00C2F10000100000002 /* CrossfadeSettings.swift */; };
+		39A1B00D2F10000100000002 /* CrossfadeSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B00E2F10000100000002 /* CrossfadeSettingsView.swift */; };
+		39A1B00F2F10000100000002 /* EditMusicSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0102F10000100000002 /* EditMusicSheet.swift */; };
+		39A1B0112F10000100000002 /* LabelManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0122F10000100000002 /* LabelManagementView.swift */; };
+		39A1B0132F10000100000002 /* MusicMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0142F10000100000002 /* MusicMetadata.swift */; };
+		39A1B0152F10000100000002 /* MusicMetadataManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0162F10000100000002 /* MusicMetadataManager.swift */; };
+		39A1B0172F10000100000002 /* LabelPlaybackFilterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0182F10000100000002 /* LabelPlaybackFilterView.swift */; };
+		39A1B0192F10000100000003 /* JogEffectSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B01A2F10000100000003 /* JogEffectSettings.swift */; };
+		39A1B01B2F10000100000004 /* ScratchSoundManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B01C2F10000100000004 /* ScratchSoundManager.swift */; };
+		39A1B01D2F10000100000005 /* CrossfadeCurve.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B01E2F10000100000005 /* CrossfadeCurve.swift */; };
+		39A1B01F2F10000100000006 /* AudioSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0202F10000100000006 /* AudioSettings.swift */; };
+		39A1B0212F10000100000007 /* AudioEffectsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0222F10000100000007 /* AudioEffectsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -58,6 +71,19 @@
 		39A1B0042F10000100000001 /* InsightsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightsView.swift; sourceTree = "<group>"; };
 		39A1B0062F10000100000001 /* ShareSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareSheet.swift; sourceTree = "<group>"; };
 		39A1B0082F10000100000001 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
+		39A1B00A2F10000100000002 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		39A1B00C2F10000100000002 /* CrossfadeSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossfadeSettings.swift; sourceTree = "<group>"; };
+		39A1B00E2F10000100000002 /* CrossfadeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossfadeSettingsView.swift; sourceTree = "<group>"; };
+		39A1B0102F10000100000002 /* EditMusicSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditMusicSheet.swift; sourceTree = "<group>"; };
+		39A1B0122F10000100000002 /* LabelManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LabelManagementView.swift; sourceTree = "<group>"; };
+		39A1B0142F10000100000002 /* MusicMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicMetadata.swift; sourceTree = "<group>"; };
+		39A1B0162F10000100000002 /* MusicMetadataManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicMetadataManager.swift; sourceTree = "<group>"; };
+		39A1B0182F10000100000002 /* LabelPlaybackFilterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LabelPlaybackFilterView.swift; sourceTree = "<group>"; };
+		39A1B01A2F10000100000003 /* JogEffectSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JogEffectSettings.swift; sourceTree = "<group>"; };
+		39A1B01C2F10000100000004 /* ScratchSoundManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScratchSoundManager.swift; sourceTree = "<group>"; };
+		39A1B01E2F10000100000005 /* CrossfadeCurve.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossfadeCurve.swift; sourceTree = "<group>"; };
+		39A1B0202F10000100000006 /* AudioSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioSettings.swift; sourceTree = "<group>"; };
+		39A1B0222F10000100000007 /* AudioEffectsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioEffectsView.swift; sourceTree = "<group>"; };
 		39CF1C0C2F0FBDCE001C9E79 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -119,6 +145,19 @@
 				39A1B0042F10000100000001 /* InsightsView.swift */,
 				39A1B0062F10000100000001 /* ShareSheet.swift */,
 				39A1B0082F10000100000001 /* MainTabView.swift */,
+				39A1B00A2F10000100000002 /* SettingsView.swift */,
+				39A1B00C2F10000100000002 /* CrossfadeSettings.swift */,
+				39A1B00E2F10000100000002 /* CrossfadeSettingsView.swift */,
+				39A1B0102F10000100000002 /* EditMusicSheet.swift */,
+				39A1B0122F10000100000002 /* LabelManagementView.swift */,
+				39A1B0142F10000100000002 /* MusicMetadata.swift */,
+				39A1B0162F10000100000002 /* MusicMetadataManager.swift */,
+				39A1B0182F10000100000002 /* LabelPlaybackFilterView.swift */,
+				39A1B01A2F10000100000003 /* JogEffectSettings.swift */,
+				39A1B01C2F10000100000004 /* ScratchSoundManager.swift */,
+				39A1B01E2F10000100000005 /* CrossfadeCurve.swift */,
+				39A1B0202F10000100000006 /* AudioSettings.swift */,
+				39A1B0222F10000100000007 /* AudioEffectsView.swift */,
 				3959A87B2E872CA200ADA57A /* Assets.xcassets */,
 				3959A87D2E872CA200ADA57A /* Preview Content */,
 			);
@@ -289,6 +328,19 @@
 				39A1B0032F10000100000001 /* InsightsView.swift in Sources */,
 				39A1B0052F10000100000001 /* ShareSheet.swift in Sources */,
 				39A1B0072F10000100000001 /* MainTabView.swift in Sources */,
+				39A1B0092F10000100000002 /* SettingsView.swift in Sources */,
+				39A1B00B2F10000100000002 /* CrossfadeSettings.swift in Sources */,
+				39A1B00D2F10000100000002 /* CrossfadeSettingsView.swift in Sources */,
+				39A1B00F2F10000100000002 /* EditMusicSheet.swift in Sources */,
+				39A1B0112F10000100000002 /* LabelManagementView.swift in Sources */,
+				39A1B0132F10000100000002 /* MusicMetadata.swift in Sources */,
+				39A1B0152F10000100000002 /* MusicMetadataManager.swift in Sources */,
+				39A1B0172F10000100000002 /* LabelPlaybackFilterView.swift in Sources */,
+				39A1B0192F10000100000003 /* JogEffectSettings.swift in Sources */,
+				39A1B01B2F10000100000004 /* ScratchSoundManager.swift in Sources */,
+				39A1B01D2F10000100000005 /* CrossfadeCurve.swift in Sources */,
+				39A1B01F2F10000100000006 /* AudioSettings.swift in Sources */,
+				39A1B0212F10000100000007 /* AudioEffectsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

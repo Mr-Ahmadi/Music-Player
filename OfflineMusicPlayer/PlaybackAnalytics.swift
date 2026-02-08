@@ -75,6 +75,25 @@ final class PlaybackAnalytics: ObservableObject {
         }
     }
     
+    // MARK: - Update Track Mapping
+    /// Called when a track is renamed to update analytics
+    func updateTrackMapping(oldId: String, newId: String) {
+        DispatchQueue.main.async {
+            for i in 0..<self.events.count {
+                if self.events[i].trackId == oldId {
+                    var event = self.events[i]
+                    event = PlaybackEvent(
+                        trackId: newId,
+                        timestamp: event.timestamp,
+                        duration: event.duration
+                    )
+                    self.events[i] = event
+                }
+            }
+            self.saveEvents()
+        }
+    }
+    
     // MARK: - Persistence
     private func saveEvents() {
         guard let data = try? JSONEncoder().encode(events) else { return }

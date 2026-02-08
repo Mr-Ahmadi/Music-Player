@@ -3,6 +3,12 @@ import SwiftUI
 struct InsightsView: View {
     @EnvironmentObject var player: AudioPlayer
     @StateObject private var analytics = PlaybackAnalytics.shared
+    @StateObject private var metadataManager = MusicMetadataManager.shared
+    
+    /// Display name for a track (fileName); used in history/insights.
+    private func displayName(forTrackId trackId: String) -> String {
+        metadataManager.getMetadata(for: trackId).displayName
+    }
     
     var body: some View {
         NavigationView {
@@ -102,8 +108,7 @@ struct InsightsView: View {
                 VStack(spacing: 8) {
                     ForEach(Array(hotTimes.enumerated()), id: \.offset) { _, insight in
                         HotTimeRow(insight: insight, trackName: { id in
-                            player.tracks.first { $0.lastPathComponent == id }?
-                                .deletingPathExtension().lastPathComponent ?? id
+                            displayName(forTrackId: id)
                         })
                     }
                 }
@@ -135,7 +140,7 @@ struct InsightsView: View {
                                 .frame(width: 24, alignment: .leading)
                             
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(url.deletingPathExtension().lastPathComponent)
+                                Text(displayName(forTrackId: item.trackId))
                                     .font(.subheadline)
                                     .fontWeight(.medium)
                                     .foregroundColor(.primary)
@@ -179,6 +184,7 @@ struct InsightsView: View {
                 SuggestionCard(
                     suggestion: suggestion,
                     trackIdToUrl: trackIdToUrl,
+                    displayName: displayName(forTrackId:),
                     onPlay: { url in player.play(url: url) }
                 )
             }
@@ -268,6 +274,7 @@ private struct HotTimeRow: View {
 private struct SuggestionCard: View {
     let suggestion: SmartSuggestion
     let trackIdToUrl: [String: URL]
+    let displayName: (String) -> String
     let onPlay: (URL) -> Void
     
     var body: some View {
@@ -293,7 +300,7 @@ private struct SuggestionCard: View {
                             Button {
                                 onPlay(url)
                             } label: {
-                                Text(url.deletingPathExtension().lastPathComponent)
+                                Text(displayName(trackId))
                                     .font(.caption)
                                     .lineLimit(1)
                                     .padding(.horizontal, 10)

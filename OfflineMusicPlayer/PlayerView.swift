@@ -2,7 +2,10 @@ import SwiftUI
 
 struct PlayerView: View {
     @EnvironmentObject var player: AudioPlayer
-    @State private var isSeekingManually = false
+    @StateObject private var metadataManager = MusicMetadataManager.shared
+    @ObservedObject private var jogSettings = JogEffectSettings.shared
+    @State private var lastSeekProgress: Double = 0
+    @State private var lastSeekTime: Date = .distantPast
     
     var body: some View {
         VStack(spacing: 12) {
@@ -38,9 +41,9 @@ struct PlayerView: View {
                     }
                     .frame(width: 50, height: 50)
                     
-                    // Track info
+                    // Track info (use display name from metadata)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(url.deletingPathExtension().lastPathComponent)
+                        Text(metadataManager.getMetadata(for: url.lastPathComponent).displayName)
                             .font(.headline)
                             .lineLimit(2)
                         
@@ -49,7 +52,16 @@ struct PlayerView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                             
-                            if player.currentTrackIndex >= 0 {
+                            if !player.labelFilterIds.isEmpty {
+                                let queue = player.getPlayQueue()
+                                if !queue.isEmpty {
+                                    Text("•")
+                                        .foregroundColor(.secondary)
+                                    Text(player.currentPlayQueueIndex >= 0 ? "\(player.currentPlayQueueIndex + 1) of \(queue.count)" : "— of \(queue.count)")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            } else if player.currentTrackIndex >= 0 {
                                 Text("•")
                                     .foregroundColor(.secondary)
                                 Text("\(player.currentTrackIndex + 1) of \(player.tracks.count)")
@@ -89,14 +101,18 @@ struct PlayerView: View {
                 value: Binding(
                     get: { player.progress },
                     set: { newValue in
-                        if isSeekingManually {
-                            player.seek(to: newValue)
-                        }
+                        player.seek(to: newValue)
                     }
                 ),
                 in: 0...max(1, player.duration),
                 onEditingChanged: { editing in
-                    isSeekingManually = editing
+                    if editing {
+                        lastSeekProgress = player.progress
+                        lastSeekTime = Date()
+                        player.beginScrubbing()
+                    } else {
+                        player.endScrubbing(finalPosition: player.progress)
+                    }
                 }
             )
             .disabled(player.currentURL == nil)

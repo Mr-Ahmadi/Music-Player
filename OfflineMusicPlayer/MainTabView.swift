@@ -20,6 +20,12 @@ struct MainTabView: View {
                 .tabItem {
                     Label("Insights", systemImage: "chart.bar.doc.horizontal")
                 }
+            
+            SettingsView()
+                .environmentObject(player)
+                .tabItem {
+                    Label("Settings", systemImage: "gear")
+                }
         }
         .sheet(isPresented: Binding(
             get: { showKeepSharedTrackSheet },
@@ -64,7 +70,7 @@ struct KeepSharedTrackSheet: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
 
-                Text("This file was shared to the app (e.g. from Telegram).")
+                Text("This file was shared to the app.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)

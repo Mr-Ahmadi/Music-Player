@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var player: AudioPlayer
+    @StateObject private var metadataManager = MusicMetadataManager.shared
     @State private var showingImporter = false
     @State private var searchText = ""
     @State private var shareURL: ShareableURLWrapper?
@@ -9,10 +10,15 @@ struct ContentView: View {
     var filteredTracks: [URL] {
         if searchText.isEmpty {
             return player.tracks
-        } else {
-            return player.tracks.filter {
-                $0.lastPathComponent.localizedCaseInsensitiveContains(searchText)
-            }
+        }
+        let query = searchText.trimmingCharacters(in: .whitespaces).lowercased()
+        return player.tracks.filter { url in
+            let fileName = url.lastPathComponent
+            let meta = metadataManager.getMetadata(for: fileName)
+            if meta.displayName.localizedCaseInsensitiveContains(query) { return true }
+            if fileName.localizedCaseInsensitiveContains(query) { return true }
+            let labelNames = meta.labels.compactMap { id in metadataManager.labels.first(where: { $0.id == id })?.name }
+            return labelNames.contains { $0.localizedCaseInsensitiveContains(query) }
         }
     }
 
@@ -175,8 +181,15 @@ struct TrackRow: View {
     let isPlaying: Bool
     let onTap: () -> Void
     var onShare: (() -> Void)?
+    
+    @StateObject private var metadataManager = MusicMetadataManager.shared
+    @State private var showEditSheet = false
 
     var body: some View {
+        let fileName = url.lastPathComponent
+        let metadata = metadataManager.getMetadata(for: fileName)
+        let labels = metadataManager.labels.filter { metadata.labels.contains($0.id) }
+        
         Button(action: onTap) {
             HStack(spacing: 12) {
                 // Playing indicator
@@ -194,14 +207,32 @@ struct TrackRow: View {
 
                 // Track info
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(url.deletingPathExtension().lastPathComponent)
+                    Text(metadata.displayName)
                         .lineLimit(2)
                         .fontWeight(isPlaying ? .semibold : .regular)
                         .foregroundColor(isPlaying ? .accentColor : .primary)
 
-                    Text(url.pathExtension.uppercased())
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    HStack(spacing: 4) {
+                        Text(url.pathExtension.uppercased())
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        if !labels.isEmpty {
+                            ForEach(labels, id: \.id) { label in
+                                HStack(spacing: 2) {
+                                    Circle()
+                                        .fill(label.swiftUIColor)
+                                        .frame(width: 6, height: 6)
+                                    Text(label.name)
+                                        .font(.caption2)
+                                }
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(label.swiftUIColor.opacity(0.15))
+                                .cornerRadius(3)
+                            }
+                        }
+                    }
                 }
 
                 Spacer()
@@ -217,12 +248,25 @@ struct TrackRow: View {
         .buttonStyle(PlainButtonStyle())
         .contextMenu {
             Button {
+                showEditSheet = true
+            } label: {
+                Label("Edit", systemImage: "pencil")
+            }
+            
+            Button {
                 onShare?()
             } label: {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
         }
-        .accessibilityLabel("\(url.deletingPathExtension().lastPathComponent), \(isPlaying ? "now playing" : "tap to play")")
+        .sheet(isPresented: $showEditSheet) {
+            EditMusicSheet(
+                isPresented: $showEditSheet,
+                fileName: fileName,
+                onUpdate: { _ in }
+            )
+        }
+        .accessibilityLabel("\(metadata.displayName), \(isPlaying ? "now playing" : "tap to play")")
     }
 }
 
