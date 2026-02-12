@@ -4,6 +4,8 @@ struct InsightsView: View {
     @EnvironmentObject var player: AudioPlayer
     @StateObject private var analytics = PlaybackAnalytics.shared
     @StateObject private var metadataManager = MusicMetadataManager.shared
+    @State private var showTodayOnly = true
+    @State private var refreshTimer: Timer?
     
     /// Display name for a track (fileName); used in history/insights.
     private func displayName(forTrackId trackId: String) -> String {
@@ -14,7 +16,21 @@ struct InsightsView: View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 24) {
-                    if analytics.events.isEmpty {
+                    // Today/All-time toggle
+                    if !analytics.events.isEmpty {
+                        HStack {
+                            Spacer()
+                            Picker("Time Period", selection: $showTodayOnly) {
+                                Text("Today").tag(true)
+                                Text("All-time").tag(false)
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(maxWidth: 180)
+                        }
+                        .padding(.horizontal)
+                    }
+                    
+                    if analytics.events.isEmpty && analytics.liveSession == nil {
                         emptyInsightsView
                     } else {
                         listeningOverviewSection
@@ -27,7 +43,26 @@ struct InsightsView: View {
             }
             .navigationTitle("Listening Insights")
             .background(Color(UIColor.systemGroupedBackground))
+            .onAppear {
+                startRefreshTimer()
+            }
+            .onDisappear {
+                stopRefreshTimer()
+            }
         }
+    }
+    
+    // MARK: - Refresh Timer
+    private func startRefreshTimer() {
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+            // Force view update by triggering objectWillChange
+            analytics.objectWillChange.send()
+        }
+    }
+    
+    private func stopRefreshTimer() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
     }
     
     // MARK: - Empty State
@@ -40,8 +75,7 @@ struct InsightsView: View {
                 .foregroundStyle(.secondary)
             
             Text("No Data Yet")
-                .font(.title2)
-                .fontWeight(.semibold)
+                .font(.title2.bold())
             
             Text("Start playing music to see your listening habits, peak hours, and get personalized suggestions.")
                 .font(.subheadline)
@@ -56,41 +90,77 @@ struct InsightsView: View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeader(title: "Overview", icon: "chart.pie")
             
+            let (playCount, totalTime, uniqueTracks) = calculateStats()
+            
             HStack(spacing: 16) {
                 StatCard(
                     title: "Total Plays",
-                    value: "\(analytics.events.count)",
+                    value: "\(playCount)",
                     icon: "play.circle.fill"
                 )
                 
-                let totalMinutes = Int(analytics.events.reduce(0) { $0 + $1.duration } / 60)
+                let avgTime = playCount > 0 ? totalTime / Double(playCount) : 0
                 StatCard(
-                    title: "Listen Time",
-                    value: totalMinutes >= 60 ? "\(totalMinutes / 60)h" : "\(totalMinutes)m",
-                    icon: "clock.fill"
+                    title: "Avg Listen",
+                    value: formatDuration(avgTime, shortFormat: true),
+                    icon: "waveform.circle.fill"
                 )
             }
             
-            if let peakHour = analytics.peakListeningHour() {
-                HStack {
-                    Image(systemName: "sun.max.fill")
-                        .foregroundStyle(.orange)
-                    Text("Peak listening: \(PlaybackAnalytics.hourLabel(peakHour))")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 4)
+            HStack(spacing: 16) {
+                StatCard(
+                    title: "Total Time",
+                    value: formatDuration(totalTime, shortFormat: false),
+                    icon: "clock.fill"
+                )
+                
+                StatCard(
+                    title: "Unique Tracks",
+                    value: "\(uniqueTracks)",
+                    icon: "music.note.list"
+                )
             }
             
-            if let peakDay = analytics.peakListeningWeekday() {
-                HStack {
+            if let peakHour = peakListeningHour() {
+                HStack(spacing: 12) {
+                    Image(systemName: "sun.max.fill")
+                        .foregroundStyle(.orange)
+                        .frame(width: 24)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Peak Listening Time")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(PlaybackAnalytics.hourLabel(peakHour))
+                            .font(.subheadline.bold())
+                            .foregroundStyle(.primary)
+                    }
+                    Spacer()
+                }
+                .padding(.vertical, 8)
+                .padding(.horizontal, 12)
+                .background(Color(UIColor.tertiarySystemGroupedBackground))
+                .cornerRadius(8)
+            }
+            
+            if let peakDay = peakListeningWeekday() {
+                HStack(spacing: 12) {
                     Image(systemName: "calendar")
                         .foregroundStyle(.blue)
-                    Text("Most active: \(PlaybackAnalytics.weekdayName(peakDay))")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .frame(width: 24)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Most Active Day")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(PlaybackAnalytics.weekdayName(peakDay))
+                            .font(.subheadline.bold())
+                            .foregroundStyle(.primary)
+                    }
+                    Spacer()
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, 8)
+                .padding(.horizontal, 12)
+                .background(Color(UIColor.tertiarySystemGroupedBackground))
+                .cornerRadius(8)
             }
         }
         .padding()
@@ -98,12 +168,59 @@ struct InsightsView: View {
         .cornerRadius(12)
     }
     
+    private func calculateStats() -> (playCount: Int, totalTime: TimeInterval, uniqueTracks: Int) {
+        if showTodayOnly {
+            return analytics.todayStats()
+        } else {
+            let playCount = analytics.events.count + (analytics.liveSession != nil ? 1 : 0)
+            let liveTime = analytics.getCurrentLiveListenDuration()
+            let totalTime = analytics.events.reduce(0) { $0 + $1.duration } + liveTime
+            let allTracksIds = analytics.events.map { $0.trackId }
+            if let session = analytics.liveSession {
+                let uniqueTracks = Set(allTracksIds + [session.trackId]).count
+                return (playCount, totalTime, uniqueTracks)
+            }
+            let uniqueTracks = Set(allTracksIds).count
+            return (playCount, totalTime, uniqueTracks)
+        }
+    }
+    
+    private func peakListeningHour() -> Int? {
+        let events = showTodayOnly ? getEventsForToday() : analytics.events
+        let hourCounts = Dictionary(grouping: events, by: { $0.hour })
+            .mapValues { $0.count }
+        return hourCounts.max(by: { $0.value < $1.value })?.key
+    }
+    
+    private func peakListeningWeekday() -> Int? {
+        let events = showTodayOnly ? getEventsForToday() : analytics.events
+        let weekdayCounts = Dictionary(grouping: events, by: { $0.weekday })
+            .mapValues { $0.count }
+        return weekdayCounts.max(by: { $0.value < $1.value })?.key
+    }
+    
+    private func getEventsForToday() -> [PlaybackEvent] {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        return analytics.events.filter { calendar.startOfDay(for: $0.timestamp) == today }
+    }
+    
+    private func formatDuration(_ seconds: TimeInterval, shortFormat: Bool) -> String {
+        if shortFormat {
+            return seconds >= 60 ? String(format: "%.1f", seconds / 60) + "m" : String(format: "%.0f", seconds) + "s"
+        } else {
+            let totalHours = Int(seconds / 3600)
+            let totalMinutes = Int(seconds.truncatingRemainder(dividingBy: 3600) / 60)
+            return totalHours > 0 ? "\(totalHours)h \(totalMinutes)m" : "\(totalMinutes)m"
+        }
+    }
+    
     // MARK: - Hot Times
     private var hotTimesSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeader(title: "When You Listen", icon: "clock.badge.checkmark")
             
-            let hotTimes = analytics.hotHoursAndDays()
+            let hotTimes = analytics.hotHoursAndDays(todayOnly: showTodayOnly)
             if !hotTimes.isEmpty {
                 VStack(spacing: 8) {
                     ForEach(Array(hotTimes.enumerated()), id: \.offset) { _, insight in
@@ -112,6 +229,12 @@ struct InsightsView: View {
                         })
                     }
                 }
+            } else {
+                Text("No listening activity" + (showTodayOnly ? " today" : ""))
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 8)
             }
         }
         .padding()
@@ -124,44 +247,51 @@ struct InsightsView: View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeader(title: "Most Played", icon: "music.note.list")
             
-            let top = analytics.topTracks(limit: 10)
+            let top = analytics.topTracks(limit: 10, todayOnly: showTodayOnly)
             let trackUrls = player.tracks
             let trackIdToUrl: [String: URL] = Dictionary(uniqueKeysWithValues: trackUrls.map { ($0.lastPathComponent, $0) })
             
-            ForEach(Array(top.enumerated()), id: \.offset) { index, item in
-                if let url = trackIdToUrl[item.trackId] {
-                    Button {
-                        player.play(url: url)
-                    } label: {
-                        HStack(spacing: 12) {
-                            Text("\(index + 1)")
-                                .font(.headline)
-                                .foregroundStyle(.secondary)
-                                .frame(width: 24, alignment: .leading)
-                            
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(displayName(forTrackId: item.trackId))
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.primary)
-                                    .lineLimit(2)
+            if top.isEmpty {
+                Text("No plays yet" + (showTodayOnly ? " today" : ""))
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 8)
+            } else {
+                ForEach(Array(top.enumerated()), id: \.offset) { index, item in
+                    if let url = trackIdToUrl[item.trackId] {
+                        Button {
+                            player.play(url: url)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Text("\(index + 1)")
+                                    .font(.headline)
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 24, alignment: .leading)
                                 
-                                Text("\(item.count) plays")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(displayName(forTrackId: item.trackId))
+                                        .font(.subheadline.bold())
+                                        .foregroundColor(.primary)
+                                        .lineLimit(2)
+                                    
+                                    Text("\(item.count) plays")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Spacer()
+                                
+                                Image(systemName: "play.circle.fill")
+                                    .foregroundStyle(Color.accentColor)
                             }
-                            
-                            Spacer()
-                            
-                            Image(systemName: "play.circle.fill")
-                                .foregroundStyle(Color.accentColor)
+                            .padding(.vertical, 8)
+                            .padding(.horizontal, 12)
+                            .background(Color(UIColor.tertiarySystemGroupedBackground))
+                            .cornerRadius(8)
                         }
-                        .padding(.vertical, 8)
-                        .padding(.horizontal, 12)
-                        .background(Color(UIColor.tertiarySystemGroupedBackground))
-                        .cornerRadius(8)
+                        .buttonStyle(PlainButtonStyle())
                     }
-                    .buttonStyle(PlainButtonStyle())
                 }
             }
         }
@@ -175,23 +305,36 @@ struct InsightsView: View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeader(title: "For You", icon: "sparkles")
             
-            let suggestions = analytics.generateSuggestions(
-                availableTrackIds: player.tracks.map { $0.lastPathComponent }
-            )
+            let suggestions = generateSuggestions()
             let trackIdToUrl: [String: URL] = Dictionary(uniqueKeysWithValues: player.tracks.map { ($0.lastPathComponent, $0) })
             
-            ForEach(suggestions) { suggestion in
-                SuggestionCard(
-                    suggestion: suggestion,
-                    trackIdToUrl: trackIdToUrl,
-                    displayName: displayName(forTrackId:),
-                    onPlay: { url in player.play(url: url) }
-                )
+            if suggestions.isEmpty {
+                Text("Keep listening to get personalized suggestions")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 8)
+            } else {
+                ForEach(suggestions) { suggestion in
+                    SuggestionCard(
+                        suggestion: suggestion,
+                        trackIdToUrl: trackIdToUrl,
+                        displayName: displayName(forTrackId:),
+                        onPlay: { url in player.play(url: url) }
+                    )
+                }
             }
         }
         .padding()
         .background(Color(UIColor.secondarySystemGroupedBackground))
         .cornerRadius(12)
+    }
+    
+    private func generateSuggestions() -> [SmartSuggestion] {
+        // Always use all-time data for suggestions, not today-only
+        return analytics.generateSuggestions(
+            availableTrackIds: player.tracks.map { $0.lastPathComponent }
+        )
     }
 }
 
@@ -227,8 +370,7 @@ private struct StatCard: View {
                     .foregroundColor(.secondary)
             }
             Text(value)
-                .font(.title2)
-                .fontWeight(.bold)
+                .font(.title2.bold())
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
@@ -246,8 +388,7 @@ private struct HotTimeRow: View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(PlaybackAnalytics.weekdayName(insight.weekday)), \(PlaybackAnalytics.hourLabel(insight.hour))")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
+                    .font(.subheadline.bold())
                 
                 if !insight.topTracks.isEmpty {
                     Text(insight.topTracks.map { trackName($0.trackId) }.joined(separator: " • "))
@@ -284,8 +425,7 @@ private struct SuggestionCard: View {
                     .foregroundStyle(Color.accentColor)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(suggestion.title)
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
+                        .font(.subheadline.bold())
                     Text(suggestion.message)
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -334,8 +474,10 @@ private struct SuggestionCard: View {
 #if DEBUG
 struct InsightsView_Previews: PreviewProvider {
     static var previews: some View {
-        InsightsView()
-            .environmentObject(AudioPlayer())
+        NavigationView {
+            InsightsView()
+                .environmentObject(AudioPlayer())
+        }
     }
 }
 #endif

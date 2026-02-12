@@ -84,7 +84,7 @@ struct CrossfadeSettingsView: View {
                         Image(systemName: "info.circle.fill")
                             .foregroundColor(.blue)
                         Text("How it works")
-                            .fontWeight(.semibold)
+                            .font(.body.bold())
                     }
                     
                     VStack(alignment: .leading, spacing: 4) {

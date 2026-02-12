@@ -2,29 +2,12 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var player: AudioPlayer
-    @ObservedObject private var jogSettings = JogEffectSettings.shared
-    @ObservedObject private var audioSettings = AudioSettings.shared
 
     var body: some View {
         NavigationView {
             Form {
                 // MARK: - Playback Section
                 Section(header: Label("Playback", systemImage: "play.circle.fill")) {
-                    Toggle(isOn: $jogSettings.isEnabled) {
-                        Label {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("DJ Scrubbing")
-                                Text("Vinyl scratch effect when seeking")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        } icon: {
-                            Image(systemName: "dial.medium.fill")
-                                .foregroundColor(.orange)
-                        }
-                    }
-                    .tint(.orange)
-                    
                     NavigationLink(destination: CrossfadeSettingsView()) {
                         Label {
                             HStack {
@@ -41,32 +24,6 @@ struct SettingsView: View {
                         } icon: {
                             Image(systemName: "waveform.circle.fill")
                                 .foregroundColor(.blue)
-                        }
-                    }
-                }
-                
-                // MARK: - Audio Effects Section
-                Section(header: Label("Audio Effects", systemImage: "slider.horizontal.3")) {
-                    NavigationLink(destination: AudioEffectsView()) {
-                        Label {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Bass Boost")
-                                    if audioSettings.bassBoostEnabled {
-                                        Text("+\(Int(audioSettings.bassBoostLevel)) dB")
-                                            .font(.caption)
-                                            .foregroundColor(.purple)
-                                    } else {
-                                        Text("Off")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-                                Spacer()
-                            }
-                        } icon: {
-                            Image(systemName: "speaker.wave.3.fill")
-                                .foregroundColor(.purple)
                         }
                     }
                 }

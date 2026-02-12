@@ -52,7 +52,7 @@ struct AudioEffectsView: View {
                         Image(systemName: "info.circle.fill")
                             .foregroundColor(.blue)
                         Text("Recommended Settings")
-                            .fontWeight(.semibold)
+                            .font(.body.bold())
                     }
                     
                     VStack(alignment: .leading, spacing: 4) {

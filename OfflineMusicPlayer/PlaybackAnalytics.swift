@@ -45,6 +45,13 @@ struct SmartSuggestion: Identifiable {
     }
 }
 
+// MARK: - Live Session Tracking
+struct LiveSession {
+    let trackId: String
+    let startTime: Date
+    var accruedDuration: TimeInterval  // Duration accumulated before current play
+}
+
 // MARK: - Playback Analytics Manager
 final class PlaybackAnalytics: ObservableObject {
     static let shared = PlaybackAnalytics()
@@ -53,17 +60,82 @@ final class PlaybackAnalytics: ObservableObject {
     private let maxEvents = 5000
     
     @Published private(set) var events: [PlaybackEvent] = []
+    @Published private(set) var liveSession: LiveSession?  // Currently playing session
     
     private init() {
         loadEvents()
     }
     
+    // MARK: - Live Session Management
+    /// Start tracking a new live session (called when user starts playing a track)
+    func startLiveSession(trackId: String, accruedDuration: TimeInterval = 0) {
+        DispatchQueue.main.async {
+            self.liveSession = LiveSession(trackId: trackId, startTime: Date(), accruedDuration: accruedDuration)
+            print("PlaybackAnalytics: Started live session for \(trackId)")
+        }
+    }
+    
+    /// Get current live listening duration (accrued + current session time)
+    func getCurrentLiveListenDuration() -> TimeInterval {
+        guard let session = liveSession else { return 0 }
+        let currentSessionDuration = Date().timeIntervalSince(session.startTime)
+        return session.accruedDuration + currentSessionDuration
+    }
+    
+    /// End current live session without recording (returns the duration for manual recording)
+    func endLiveSession() -> TimeInterval? {
+        guard let session = liveSession else { return nil }
+        let totalDuration = getCurrentLiveListenDuration()
+        DispatchQueue.main.async {
+            self.liveSession = nil
+        }
+        print("PlaybackAnalytics: Ended live session for \(session.trackId) (listened \(Int(totalDuration))s)")
+        return totalDuration
+    }
+    
     // MARK: - Record Play
-    func recordPlay(trackId: String, duration: TimeInterval) {
+    /// Records a play event if the listen duration meets the minimum threshold.
+    /// This accounts for different track lengths to provide fair analytics:
+    /// - Very short tracks (<30s): Must listen ≥80% to be counted
+    /// - Short tracks (30-120s): Must listen ≥60% to be counted
+    /// - Medium tracks (2-5 min): Must listen ≥40% or at least 1 minute
+    /// - Long tracks (>5 min): Must listen ≥25% or at least 2 minutes
+    /// 
+    /// Parameters:
+    ///   - trackId: The unique identifier of the track (typically filename)
+    ///   - duration: The total duration of the track in seconds
+    ///   - listenDuration: How long the user actually listened in seconds
+    func recordPlay(trackId: String, duration: TimeInterval, listenDuration: TimeInterval) {
+        let isValidPlay: Bool
+        let listenPercentage = duration > 0 ? listenDuration / duration : 0
+        
+        switch duration {
+        case ..<30:
+            // Very short tracks: must listen 80% to count
+            isValidPlay = listenPercentage >= 0.8
+            
+        case 30..<120:
+            // Short tracks: must listen 60% to count
+            isValidPlay = listenPercentage >= 0.6
+            
+        case 120..<300:
+            // Medium tracks (2-5 min): must listen 40% or at least 1 minute
+            isValidPlay = listenPercentage >= 0.4 || listenDuration >= 60
+            
+        default:
+            // Long tracks (>5 min): must listen 25% or at least 2 minutes
+            isValidPlay = listenPercentage >= 0.25 || listenDuration >= 120
+        }
+        
+        guard isValidPlay else {
+            print("PlaybackAnalytics: Skipped recording play for \(trackId) (listened \(Int(listenDuration))s / \(Int(duration))s, \(Int(listenPercentage * 100))%)")
+            return
+        }
+        
         let event = PlaybackEvent(
             trackId: trackId,
             timestamp: Date(),
-            duration: duration
+            duration: listenDuration // Record actual listen time, not total track length
         )
         
         DispatchQueue.main.async {
@@ -72,6 +144,7 @@ final class PlaybackAnalytics: ObservableObject {
                 self.events.removeFirst(self.events.count - self.maxEvents)
             }
             self.saveEvents()
+            print("PlaybackAnalytics: Recorded play for \(trackId) (listened \(Int(listenDuration))s / \(Int(duration))s, \(Int(listenPercentage * 100))%)")
         }
     }
     
@@ -129,24 +202,79 @@ final class PlaybackAnalytics: ObservableObject {
         )
     }
     
-    func topTracks(limit: Int = 10) -> [(trackId: String, count: Int)] {
-        let counts = Dictionary(grouping: events, by: { $0.trackId })
-            .mapValues { $0.count }
-            .sorted { $0.value > $1.value }
-        
-        return Array(counts.prefix(limit)).map { (trackId: $0.key, count: $0.value) }
+    // MARK: - Today's Statistics
+    private var todayEvents: [PlaybackEvent] {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        return events.filter { calendar.startOfDay(for: $0.timestamp) == today }
     }
     
-    func hotHoursAndDays() -> [HourDayInsight] {
+    func todayTopTracks(limit: Int = 10) -> [(trackId: String, count: Int)] {
+        var counts = Dictionary(grouping: todayEvents, by: { $0.trackId })
+            .mapValues { $0.count }
+        
+        // Include current live session in today's count if playing today
+        if let session = liveSession, calendar.startOfDay(for: session.startTime) == calendar.startOfDay(for: Date()) {
+            counts[session.trackId, default: 0] += 1
+        }
+        
+        let sorted = counts.sorted { $0.value > $1.value }
+        return Array(sorted.prefix(limit)).map { (trackId: $0.key, count: $0.value) }
+    }
+    
+    func todayStats() -> (playCount: Int, totalTime: TimeInterval, uniqueTracks: Int) {
+        var playCount = todayEvents.count
+        var totalTime = todayEvents.reduce(0) { $0 + $1.duration }
+        
+        // Include current live session
+        if let session = liveSession {
+            playCount += 1
+            totalTime += getCurrentLiveListenDuration()
+        }
+        
+        let uniqueTracks = Set(todayEvents.map { $0.trackId }).count
+        return (playCount, totalTime, uniqueTracks)
+    }
+    
+    private var calendar: Calendar { Calendar.current }
+    
+    func topTracks(limit: Int = 10, todayOnly: Bool = false) -> [(trackId: String, count: Int)] {
+        let eventsToUse = todayOnly ? todayEvents : events
+        var counts = Dictionary(grouping: eventsToUse, by: { $0.trackId })
+            .mapValues { $0.count }
+        
+        // Include current live session if appropriate
+        if todayOnly, let session = liveSession {
+            counts[session.trackId, default: 0] += 1
+        }
+        
+        let sorted = counts.sorted { $0.value > $1.value }
+        return Array(sorted.prefix(limit)).map { (trackId: $0.key, count: $0.value) }
+    }
+    
+    func hotHoursAndDays(todayOnly: Bool = false) -> [HourDayInsight] {
+        let eventsToUse = todayOnly ? todayEvents : events
         var hourDayCounts: [String: (count: Int, tracks: [String: Int])] = [:]
         
-        for event in events {
+        for event in eventsToUse {
             let key = "\(event.hour)-\(event.weekday)"
             if hourDayCounts[key] == nil {
                 hourDayCounts[key] = (0, [:])
             }
             hourDayCounts[key]?.count += 1
             hourDayCounts[key]?.tracks[event.trackId, default: 0] += 1
+        }
+        
+        // Include current live session if today
+        if todayOnly, let session = liveSession {
+            let hour = calendar.component(.hour, from: session.startTime)
+            let weekday = calendar.component(.weekday, from: session.startTime)
+            let key = "\(hour)-\(weekday)"
+            if hourDayCounts[key] == nil {
+                hourDayCounts[key] = (0, [:])
+            }
+            hourDayCounts[key]?.count += 1
+            hourDayCounts[key]?.tracks[session.trackId, default: 0] += 1
         }
         
         return hourDayCounts

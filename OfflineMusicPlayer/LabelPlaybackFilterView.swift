@@ -14,7 +14,7 @@ struct LabelPlaybackFilterView: View {
         List {
             Section(header: Text("Playback Filter"), footer: Text("When on, Next/Previous and automatic playback only use tracks that have at least one of the selected labels.")) {
                 Toggle("Only play selected labels", isOn: $filterEnabled)
-                    .onChange(of: filterEnabled) { _, on in
+                    .onChange(of: filterEnabled) { on in
                         if !on { player.labelFilterIds = [] }
                     }
 
@@ -69,7 +69,7 @@ struct LabelPlaybackFilterView: View {
         .onAppear {
             filterEnabled = !player.labelFilterIds.isEmpty
         }
-        .onChange(of: player.labelFilterIds) { _, newValue in
+        .onChange(of: player.labelFilterIds) { newValue in
             filterEnabled = !newValue.isEmpty
         }
     }

@@ -23,7 +23,10 @@ struct OfflineMusicPlayerApp: App {
 
         if supportedExtensions.contains(fileExtension) {
             // Ask user whether to keep the track instead of auto-importing
-            player.pendingSharedTrackURL = url
+            // Append to existing list to support multiple files coming in sequence (e.g. AirDrop multiple)
+            DispatchQueue.main.async {
+                player.pendingSharedTrackURLs.append(url)
+            }
         } else {
             print("OfflineMusicPlayerApp: Unsupported file type: \(fileExtension)")
         }

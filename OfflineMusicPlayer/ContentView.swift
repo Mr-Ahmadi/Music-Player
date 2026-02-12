@@ -6,6 +6,8 @@ struct ContentView: View {
     @State private var showingImporter = false
     @State private var searchText = ""
     @State private var shareURL: ShareableURLWrapper?
+    @State private var selection = Set<URL>()
+    @State private var isEditingSelection = false
 
     var filteredTracks: [URL] {
         if searchText.isEmpty {
@@ -51,9 +53,35 @@ struct ContentView: View {
                     }
                 }
 
-                ToolbarItem(placement: .navigationBarLeading) {
-                    EditButton()
+                ToolbarItemGroup(placement: .navigationBarLeading) {
+                    if !selection.isEmpty {
+                        HStack(spacing: 12) {
+                            Button(action: {
+                                let urls = Array(selection).compactMap { player.resolvedURL(for: $0) }
+                                shareURL = ShareableURLWrapper(urls: urls)
+                            }) {
+                                Image(systemName: "square.and.arrow.up")
+                            }
+                            
+                            Button(action: {
+                                selection.removeAll()
+                            }) {
+                                Text("\(selection.count) Selected")
+                                    .font(.caption)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.accentColor.opacity(0.2))
+                                    .cornerRadius(6)
+                            }
+                        }
+                    } else {
+                        Button(action: {
+                            isEditingSelection = !isEditingSelection
+                        }) {
+                            Image(systemName: isEditingSelection ? "checkmark" : "square.on.square")
+                        }
                         .disabled(player.tracks.isEmpty)
+                    }
                 }
             }
         }
@@ -64,13 +92,13 @@ struct ContentView: View {
             }
         }
         .sheet(item: $shareURL) { wrapper in
-            ShareSheet(items: [wrapper.url])
+            ShareSheet(items: wrapper.urls)
         }
     }
     
     private func presentShareSheet(for trackURL: URL) {
         guard let resolved = player.resolvedURL(for: trackURL) else { return }
-        shareURL = ShareableURLWrapper(url: resolved)
+        shareURL = ShareableURLWrapper(urls: [resolved])
     }
 
     // MARK: - Subviews
@@ -130,14 +158,26 @@ struct ContentView: View {
     }
 
     private var trackListView: some View {
-        List {
+        List(selection: $selection) {
             ForEach(filteredTracks, id: \.self) { url in
                 TrackRow(
                     url: url,
                     isPlaying: player.currentURL == url,
-                    onTap: { player.play(url: url) },
+                    isSelected: selection.contains(url),
+                    onTap: { 
+                        if isEditingSelection {
+                            if selection.contains(url) {
+                                selection.remove(url)
+                            } else {
+                                selection.insert(url)
+                            }
+                        } else {
+                            player.play(url: url)
+                        }
+                    },
                     onShare: { presentShareSheet(for: url) }
                 )
+                .tag(url)
             }
             .onDelete { indices in
                 deleteItems(at: indices)
@@ -158,6 +198,7 @@ struct ContentView: View {
             }
         }
         .listStyle(PlainListStyle())
+        .environment(\.editMode, .constant(isEditingSelection ? .active : .inactive))
     }
 
     // MARK: - Helper Methods
@@ -172,13 +213,14 @@ struct ContentView: View {
 // MARK: - Shareable URL Wrapper (for sheet binding)
 struct ShareableURLWrapper: Identifiable {
     let id = UUID()
-    let url: URL
+    let urls: [URL]
 }
 
 // MARK: - TrackRow
 struct TrackRow: View {
     let url: URL
     let isPlaying: Bool
+    let isSelected: Bool
     let onTap: () -> Void
     var onShare: (() -> Void)?
     
@@ -209,7 +251,7 @@ struct TrackRow: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(metadata.displayName)
                         .lineLimit(2)
-                        .fontWeight(isPlaying ? .semibold : .regular)
+                        .font(isPlaying ? .body.bold() : .body)
                         .foregroundColor(isPlaying ? .accentColor : .primary)
 
                     HStack(spacing: 4) {

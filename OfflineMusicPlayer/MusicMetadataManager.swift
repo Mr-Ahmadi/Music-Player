@@ -141,6 +141,8 @@ final class MusicMetadataManager: ObservableObject {
         }
         metadata = decoded
     }
+    
+    // MARK: - Sync Support (Removed)
 }
 
 // MARK: - String Helper

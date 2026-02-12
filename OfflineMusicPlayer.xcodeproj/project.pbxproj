@@ -34,6 +34,7 @@
 		39A1B01D2F10000100000005 /* CrossfadeCurve.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B01E2F10000100000005 /* CrossfadeCurve.swift */; };
 		39A1B01F2F10000100000006 /* AudioSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0202F10000100000006 /* AudioSettings.swift */; };
 		39A1B0212F10000100000007 /* AudioEffectsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0222F10000100000007 /* AudioEffectsView.swift */; };
+		39A1B0242F10000100000008 /* AudioPlayer+Shared.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0232F10000100000008 /* AudioPlayer+Shared.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -84,6 +85,7 @@
 		39A1B01E2F10000100000005 /* CrossfadeCurve.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossfadeCurve.swift; sourceTree = "<group>"; };
 		39A1B0202F10000100000006 /* AudioSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioSettings.swift; sourceTree = "<group>"; };
 		39A1B0222F10000100000007 /* AudioEffectsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioEffectsView.swift; sourceTree = "<group>"; };
+		39A1B0232F10000100000008 /* AudioPlayer+Shared.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AudioPlayer+Shared.swift"; sourceTree = "<group>"; };
 		39CF1C0C2F0FBDCE001C9E79 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -139,6 +141,7 @@
 				3959A8772E872CA100ADA57A /* OfflineMusicPlayerApp.swift */,
 				3959A8792E872CA100ADA57A /* ContentView.swift */,
 				3959A8961E872CA100ADA57A /* AudioPlayer.swift */,
+				39A1B0232F10000100000008 /* AudioPlayer+Shared.swift */,
 				3959A8971E872CA100ADA57A /* DocumentPicker.swift */,
 				3959A8981E872CA100ADA57A /* PlayerView.swift */,
 				39A1B0022F10000100000001 /* PlaybackAnalytics.swift */,
@@ -341,6 +344,7 @@
 				39A1B01D2F10000100000005 /* CrossfadeCurve.swift in Sources */,
 				39A1B01F2F10000100000006 /* AudioSettings.swift in Sources */,
 				39A1B0212F10000100000007 /* AudioEffectsView.swift in Sources */,
+				39A1B0242F10000100000008 /* AudioPlayer+Shared.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

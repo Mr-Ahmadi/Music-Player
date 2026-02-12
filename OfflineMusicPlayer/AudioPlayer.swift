@@ -15,14 +15,23 @@ final class AudioPlayer: NSObject, ObservableObject {
         didSet { saveTracks() }
     }
     /// When set, the app should show "Keep this track?" for shared audio (e.g. from Telegram).
-    @Published var pendingSharedTrackURL: URL?
+    @Published var pendingSharedTrackURLs: [URL] = []
     /// When non-empty, only tracks with at least one of these labels are played (next/prev/crossfade).
     @Published var labelFilterIds: Set<String> = [] {
         didSet { saveLabelFilter(); applyLabelFilterToPlayback() }
     }
 
-    // MARK: - Private Properties
+    // MARK: - Audio Engine (for EQ effects)
+    private var audioEngine: AVAudioEngine?
+    private var playerNode: AVAudioPlayerNode?
+    private var eqNode: AVAudioUnitEQ?
+    private var audioFile: AVAudioFile?
+    private var audioFormat: AVAudioFormat?
+    
+    // MARK: - Legacy AVAudioPlayer (fallback)
     private var audioPlayer: AVAudioPlayer?
+    
+    // MARK: - Private Properties
     private var timer: Timer?
     private var currentSecurityURL: URL?
     private var isAccessingSecurityResource: Bool = false
@@ -54,6 +63,19 @@ final class AudioPlayer: NSObject, ObservableObject {
     private var wasPlayingBeforeScrub: Bool = false
     private var lastScrubTime: Date?
     private var lastScrubPosition: TimeInterval?
+    
+    // Audio Settings observer
+    private var settingsObserver: AnyCancellable?
+    
+    // Track playback position for engine-based playback
+    private var engineStartTime: AVAudioTime?
+    private var pausedPosition: AVAudioFramePosition = 0
+    private var playbackSegmentID = UUID()
+    
+    // Analytics
+    private var playbackStartTime: Date?
+    private var accruedListenDuration: TimeInterval = 0
+    private var hasRecordedCurrentSession: Bool = false  // Prevent double-recording
 
     // MARK: - Initialization
     override init() {
@@ -64,6 +86,7 @@ final class AudioPlayer: NSObject, ObservableObject {
         loadBookmarks()
         loadFileHashes()
         loadLabelFilter()
+        setupSettingsObserver()
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             self?.loadTracks()
@@ -72,22 +95,36 @@ final class AudioPlayer: NSObject, ObservableObject {
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        settingsObserver?.cancel()
+        // Save current listening session before deallocs
+        saveCurrentListeningSession()
         if let url = currentSecurityURL, isAccessingSecurityResource {
             url.stopAccessingSecurityScopedResource()
         }
+        teardownAudioEngine()
+    }
+    
+    // MARK: - Settings Observer
+    private func setupSettingsObserver() {
+        // Observe bass boost changes and update EQ in real-time
+        settingsObserver = AudioSettings.shared.$bassBoostEnabled
+            .combineLatest(AudioSettings.shared.$bassBoostLevel)
+            .removeDuplicates(by: { ($0.0 == $1.0 && $0.1 == $1.1) })
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] (enabled, level) in
+                self?.updateBassBoostEQ(enabled: enabled, level: level)
+            }
     }
 
-    // MARK: - Audio Session Setup (FIXED)
+    // MARK: - Audio Session Setup
     private func setupAudioSession() {
         let audioSession = AVAudioSession.sharedInstance()
         
         do {
-            // FIXED: Use minimal, compatible options
-            // Removed .duckOthers which causes -50 error on some iOS versions
             try audioSession.setCategory(
                 .playback,
                 mode: .default,
-                options: []  // Empty options - most compatible
+                options: []
             )
             
             try audioSession.setActive(true)
@@ -96,7 +133,6 @@ final class AudioPlayer: NSObject, ObservableObject {
         } catch {
             print("AudioPlayer: ⚠️ Audio session setup failed - \(error.localizedDescription)")
             
-            // Secondary fallback: Try with minimum configuration
             do {
                 try audioSession.setCategory(.playback)
                 try audioSession.setActive(true)
@@ -104,6 +140,137 @@ final class AudioPlayer: NSObject, ObservableObject {
             } catch {
                 print("AudioPlayer: ❌ All audio session configurations failed")
             }
+        }
+    }
+    
+    // MARK: - Audio Engine Setup
+    private func setupAudioEngine() {
+        teardownAudioEngine()
+        
+        audioEngine = AVAudioEngine()
+        playerNode = AVAudioPlayerNode()
+        
+        // Create 3-band EQ for professional sound
+        eqNode = AVAudioUnitEQ(numberOfBands: 3)
+        
+        guard let engine = audioEngine,
+              let player = playerNode,
+              let eq = eqNode else { return }
+        
+        // Configure EQ bands for bass enhancement
+        configureBassBoostEQ()
+        
+        engine.attach(player)
+        engine.attach(eq)
+        
+        // Connect: PlayerNode -> EQ -> MainMixer -> Output
+        // Connections will be made when we have audio format
+    }
+    
+    private func configureBassBoostEQ() {
+        guard let eq = eqNode else { return }
+        
+        // Band 0: Sub-bass (Low Shelf at 45Hz)
+        if eq.bands.count > 0 {
+            let subBass = eq.bands[0]
+            subBass.filterType = .lowShelf
+            subBass.frequency = 45.0
+            subBass.bandwidth = 1.2
+            subBass.gain = 0.0  // Will be set by updateBassBoostEQ
+            subBass.bypass = false
+        }
+        
+        // Band 1: Bass / Kick punch (Parametric Peak at 80Hz)
+        if eq.bands.count > 1 {
+            let bass = eq.bands[1]
+            bass.filterType = .parametric
+            bass.frequency = 80.0
+            bass.bandwidth = 1.0
+            bass.gain = 0.0
+            bass.bypass = false
+        }
+        
+        // Band 2: Clarity (Parametric Peak at 12kHz)
+        // High-end boost to maintain clarity when bass is heavy
+        if eq.bands.count > 2 {
+            let clarity = eq.bands[2]
+            clarity.filterType = .parametric
+            clarity.frequency = 12000.0
+            clarity.bandwidth = 1.5
+            clarity.gain = 0.0
+            clarity.bypass = false
+        }
+    }
+    
+    private func updateBassBoostEQ(enabled: Bool, level: Float) {
+        guard let eq = eqNode else { return }
+        
+        if !enabled {
+            // Bypass all bands
+            for band in eq.bands {
+                band.gain = 0.0
+            }
+            return
+        }
+        
+        // Apply gain based on level (0-12 dB)
+        // Distribute gain across bands for natural sound
+        
+        // Sub-bass gets the primary boost
+        if eq.bands.count > 0 {
+            eq.bands[0].gain = level * 1.0  // 100% of requested gain
+        }
+        
+        // Bass punch gets moderate boost
+        if eq.bands.count > 1 {
+            eq.bands[1].gain = level * 0.7  // 70% of requested gain
+        }
+        
+        // High-end gets subtle boost to balance the heavy low-end
+        if eq.bands.count > 2 {
+            eq.bands[2].gain = level * 0.25  // 25% for "air" and clarity
+        }
+        
+        print("AudioPlayer: Bass boost updated - enabled: \(enabled), level: \(level)dB")
+    }
+    
+    private func teardownAudioEngine() {
+        audioEngine?.stop()
+        
+        if let player = playerNode {
+            player.stop()
+            audioEngine?.detach(player)
+        }
+        if let eq = eqNode {
+            audioEngine?.detach(eq)
+        }
+        
+        playerNode = nil
+        eqNode = nil
+        audioEngine = nil
+        audioFile = nil
+        audioFormat = nil
+    }
+    
+    private func connectAndStartEngine(format: AVAudioFormat) {
+        guard let engine = audioEngine,
+              let player = playerNode,
+              let eq = eqNode else { return }
+        
+        // Connect nodes with the audio format: Player -> EQ -> MainMixer
+        engine.connect(player, to: eq, format: format)
+        engine.connect(eq, to: engine.mainMixerNode, format: format)
+        
+        do {
+            try engine.start()
+            
+            // Apply current bass boost settings
+            let settings = AudioSettings.shared
+            updateBassBoostEQ(enabled: settings.bassBoostEnabled, level: settings.bassBoostLevel)
+            
+            print("AudioPlayer: ✅ Audio engine started with EQ")
+        } catch {
+            print("AudioPlayer: ❌ Failed to start audio engine: \(error)")
         }
     }
 
@@ -115,14 +282,8 @@ final class AudioPlayer: NSObject, ObservableObject {
         commandCenter.playCommand.isEnabled = true
         commandCenter.playCommand.addTarget { [weak self] _ in
             guard let self = self else { return .commandFailed }
-            if let player = self.audioPlayer, !player.isPlaying {
-                player.play()
-                self.isPlaying = true
-                self.startTimer()
-                self.updateNowPlayingInfo()
-                return .success
-            }
-            return .commandFailed
+            self.resumePlayback()
+            return .success
         }
 
         // Pause command
@@ -169,11 +330,11 @@ final class AudioPlayer: NSObject, ObservableObject {
         commandCenter.skipForwardCommand.preferredIntervals = [15]
         commandCenter.skipForwardCommand.addTarget { [weak self] event in
             guard let self = self,
-                  let command = event.command as? MPSkipIntervalCommand,
-                  let player = self.audioPlayer else {
+                  let command = event.command as? MPSkipIntervalCommand else {
                 return .commandFailed
             }
-            let newTime = min(player.currentTime + Double(truncating: command.preferredIntervals[0]), player.duration)
+            let currentTime = self.getCurrentPlaybackTime()
+            let newTime = min(currentTime + Double(truncating: command.preferredIntervals[0]), self.duration)
             self.seek(to: newTime)
             return .success
         }
@@ -182,16 +343,37 @@ final class AudioPlayer: NSObject, ObservableObject {
         commandCenter.skipBackwardCommand.preferredIntervals = [15]
         commandCenter.skipBackwardCommand.addTarget { [weak self] event in
             guard let self = self,
-                  let command = event.command as? MPSkipIntervalCommand,
-                  let player = self.audioPlayer else {
+                  let command = event.command as? MPSkipIntervalCommand else {
                 return .commandFailed
             }
-            let newTime = max(player.currentTime - Double(truncating: command.preferredIntervals[0]), 0)
+            let currentTime = self.getCurrentPlaybackTime()
+            let newTime = max(currentTime - Double(truncating: command.preferredIntervals[0]), 0)
             self.seek(to: newTime)
             return .success
         }
 
         print("AudioPlayer: Remote commands configured")
+    }
+    
+    // MARK: - Get Current Playback Time
+    private func getCurrentPlaybackTime() -> TimeInterval {
+        // Try engine-based playback first
+        if let engine = audioEngine, engine.isRunning,
+           let player = playerNode,
+           let nodeTime = player.lastRenderTime,
+           let playerTime = player.playerTime(forNodeTime: nodeTime) {
+            let sampleRate = playerTime.sampleRate
+            let currentFrame = pausedPosition + playerTime.sampleTime
+            return Double(currentFrame) / sampleRate
+        }
+        
+        // Fallback if node time isn't ready (avoids 0.0 flash)
+        if let file = audioFile {
+            return Double(pausedPosition) / file.processingFormat.sampleRate
+        }
+        
+        // Fall back to AVAudioPlayer
+        return audioPlayer?.currentTime ?? 0
     }
 
     // MARK: - Notifications
@@ -211,7 +393,23 @@ final class AudioPlayer: NSObject, ObservableObject {
             name: AVAudioSession.routeChangeNotification,
             object: AVAudioSession.sharedInstance()
         )
+        
+        // App lifecycle - save insights when app goes to background
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppWillResignActive),
+            name: UIApplication.willResignActiveNotification,
+            object: nil
+        )
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppDidEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification,
+            object: nil
+        )
     }
+    
 
     @objc private func handleInterruption(notification: Notification) {
         guard let userInfo = notification.userInfo,
@@ -233,11 +431,7 @@ final class AudioPlayer: NSObject, ObservableObject {
 
             if options.contains(.shouldResume) {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                    guard let self = self, let player = self.audioPlayer else { return }
-                    player.play()
-                    self.isPlaying = true
-                    self.startTimer()
-                    self.updateNowPlayingInfo()
+                    self?.resumePlayback()
                     print("AudioPlayer: Resuming after interruption")
                 }
             }
@@ -266,8 +460,18 @@ final class AudioPlayer: NSObject, ObservableObject {
             break
         }
     }
+    
+    @objc private func handleAppWillResignActive() {
+        print("AudioPlayer: App will resign active - saving listening session")
+        saveCurrentListeningSession()
+    }
+    
+    @objc private func handleAppDidEnterBackground() {
+        print("AudioPlayer: App did enter background - saving listening session")
+        saveCurrentListeningSession()
+    }
 
-    // MARK: - Now Playing Info (FIXED for MSVEntitlementUtilities warning)
+    // MARK: - Now Playing Info
     private func updateNowPlayingInfo() {
         guard let url = currentURL else {
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
@@ -282,26 +486,21 @@ final class AudioPlayer: NSObject, ObservableObject {
         nowPlayingInfo[MPMediaItemPropertyArtist] = "Offline Music Player"
         nowPlayingInfo[MPMediaItemPropertyAlbumTitle] = "Local Library"
 
-        if let player = audioPlayer {
-            nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = player.duration
-            nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = player.currentTime
-            nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = player.isPlaying ? 1.0 : 0.0
-        }
+        nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
+        nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = getCurrentPlaybackTime()
+        nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
 
-        // FIXED: Generate proper artwork to eliminate MSVEntitlementUtilities warning
         nowPlayingInfo[MPMediaItemPropertyArtwork] = createProperArtwork()
 
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
         print("AudioPlayer: Updated Now Playing info for '\(trackTitle)'")
     }
 
-    // MARK: - Proper Artwork Generation (FIXED)
+    // MARK: - Proper Artwork Generation
     private func createProperArtwork() -> MPMediaItemArtwork {
-        // Create artwork with standard size and proper rendering
         let artworkSize = CGSize(width: 512, height: 512)
         
         return MPMediaItemArtwork(boundsSize: artworkSize) { size in
-            // Use UIGraphicsImageRenderer for proper iOS rendering context
             let format = UIGraphicsImageRendererFormat()
             format.scale = 1.0
             format.opaque = true
@@ -311,7 +510,6 @@ final class AudioPlayer: NSObject, ObservableObject {
             return renderer.image { context in
                 _ = CGRect(origin: .zero, size: size)
                 
-                // Background gradient
                 let colorSpace = CGColorSpaceCreateDeviceRGB()
                 let colors = [
                     UIColor.systemIndigo.cgColor,
@@ -331,7 +529,6 @@ final class AudioPlayer: NSObject, ObservableObject {
                     )
                 }
                 
-                // Music icon
                 let iconSize = size.width * 0.4
                 let symbolConfig = UIImage.SymbolConfiguration(
                     pointSize: iconSize,
@@ -346,7 +543,6 @@ final class AudioPlayer: NSObject, ObservableObject {
                         height: iconSize
                     )
                     
-                    // Draw with white color
                     UIColor.white.withAlphaComponent(0.85).setFill()
                     musicIcon.draw(in: iconRect, blendMode: .normal, alpha: 0.85)
                 }
@@ -356,48 +552,207 @@ final class AudioPlayer: NSObject, ObservableObject {
 
     // MARK: - Playback Controls
     func togglePlayPause() {
-        guard let player = audioPlayer else { return }
-
-        if player.isPlaying {
+        if isPlaying {
             pause()
         } else {
+            resumePlayback()
+        }
+    }
+    
+    private func resumePlayback() {
+        // Try engine-based playback first
+        if let engine = audioEngine, let player = playerNode, let file = audioFile {
+            if !engine.isRunning {
+                do {
+                    try engine.start()
+                } catch {
+                    print("AudioPlayer: Failed to restart engine: \(error)")
+                }
+            }
+            
+            // Schedule remaining audio from paused position
+            let frameCount = AVAudioFrameCount(file.length - pausedPosition)
+            if frameCount > 0 {
+                // Generate new segment ID
+                playbackSegmentID = UUID()
+                let captureID = playbackSegmentID
+                
+                player.scheduleSegment(file, startingFrame: pausedPosition, frameCount: frameCount, at: nil) { [weak self] in
+                    DispatchQueue.main.async {
+                        guard let self = self, self.playbackSegmentID == captureID else { return }
+                        self.handlePlaybackFinished()
+                    }
+                }
+            }
             player.play()
             isPlaying = true
+            playbackStartTime = Date()
             startTimer()
             updateNowPlayingInfo()
+            
+            // Restart live session
+            if let currentURL = currentURL {
+                PlaybackAnalytics.shared.startLiveSession(trackId: currentURL.lastPathComponent, accruedDuration: accruedListenDuration)
+            }
+            return
+        }
+        
+        // Fall back to AVAudioPlayer
+        if let player = audioPlayer, !player.isPlaying {
+            player.play()
+            isPlaying = true
+            playbackStartTime = Date()
+            startTimer()
+            updateNowPlayingInfo()
+            
+            // Restart live session
+            if let currentURL = currentURL {
+                PlaybackAnalytics.shared.startLiveSession(trackId: currentURL.lastPathComponent, accruedDuration: accruedListenDuration)
+            }
         }
     }
 
     func pause() {
+        // Invalidate current playback segment so stop() doesn't trigger next track
+        playbackSegmentID = UUID()
+
+        // Handle engine-based playback
+        if let player = playerNode, player.isPlaying {
+            // Save current position
+            if let nodeTime = player.lastRenderTime,
+               let playerTime = player.playerTime(forNodeTime: nodeTime) {
+                pausedPosition += playerTime.sampleTime
+            }
+            player.stop()
+        }
+        
+        // Handle AVAudioPlayer fallback
         audioPlayer?.pause()
+        
+        // Update accrued duration
+        if let startTime = playbackStartTime {
+            accruedListenDuration += Date().timeIntervalSince(startTime)
+            playbackStartTime = nil
+        }
+        
         isPlaying = false
         stopTimer()
         updateNowPlayingInfo()
+        
+        // Update live session with accrued duration and pause it
+        if let currentURL = currentURL {
+            PlaybackAnalytics.shared.endLiveSession()
+            PlaybackAnalytics.shared.startLiveSession(trackId: currentURL.lastPathComponent, accruedDuration: accruedListenDuration)
+        }
+        
+        // Save current listening session when pausing
+        saveCurrentListeningSession()
+    }
+    
+    /// Saves the current listening session to analytics if any time has been accrued.
+    /// This ensures partial listens are always recorded, even if the track didn't finish.
+    /// Prevents double-recording by tracking whether the current session has already been saved.
+    private func saveCurrentListeningSession() {
+        guard let url = currentURL, !hasRecordedCurrentSession else { return }
+        
+        // Add any current playback time to accrued duration
+        let totalListenTime = accruedListenDuration + (playbackStartTime.map { Date().timeIntervalSince($0) } ?? 0)
+        
+        // Only save if meaningful progress was made (at least 5 seconds)
+        // This filters out accidental plays
+        guard totalListenTime >= 5.0 else { return }
+        
+        // Mark this session as recorded to prevent double-recording
+        hasRecordedCurrentSession = true
+        
+        PlaybackAnalytics.shared.recordPlay(
+            trackId: url.lastPathComponent,
+            duration: duration,
+            listenDuration: totalListenTime
+        )
+        
+        print("AudioPlayer: Saved partial listen for \(url.lastPathComponent) (\(Int(totalListenTime))s)")
+    }
+
+    /// Extracts a segment of audio data from the current file for scratching
+    func getAudioBuffer(for duration: TimeInterval = 2.0) -> AVAudioPCMBuffer? {
+        guard let file = audioFile else { return nil }
+        
+        let sampleRate = file.processingFormat.sampleRate
+        let frameCount = AVAudioFrameCount(min(Double(file.length), duration * sampleRate))
+        
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frameCount) else {
+            return nil
+        }
+        
+        do {
+            // Read from current position
+            let startFrame = max(0, min(file.length - Int64(frameCount), pausedPosition))
+            file.framePosition = startFrame
+            try file.read(into: buffer, frameCount: frameCount)
+            return buffer
+        } catch {
+            print("AudioPlayer: Failed to read buffer for scratching: \(error)")
+            return nil
+        }
     }
 
     func seek(to time: TimeInterval) {
-        guard let player = audioPlayer else { return }
-        
         if isUserScrubbing && JogEffectSettings.shared.isEnabled {
             handleScrubbing(to: time)
         } else {
-            // Standard seek behavior
-            player.rate = 1.0
-            player.currentTime = max(0, min(time, player.duration))
-            progress = player.currentTime
+            performSeek(to: time)
+        }
+    }
+    
+    private func performSeek(to time: TimeInterval) {
+        let clampedTime = max(0, min(time, duration))
+        
+        // Handle engine-based seeking
+        if let player = playerNode, let file = audioFile {
+            let wasPlaying = player.isPlaying
+            
+            // Invalidate current segment ID
+            playbackSegmentID = UUID()
+            player.stop()
+            
+            let sampleRate = file.processingFormat.sampleRate
+            pausedPosition = AVAudioFramePosition(clampedTime * sampleRate)
+            
+            let remainingFrames = file.length - pausedPosition
+            if remainingFrames > 0 {
+                let captureID = playbackSegmentID
+                
+                player.scheduleSegment(file, startingFrame: pausedPosition, frameCount: AVAudioFrameCount(remainingFrames), at: nil) { [weak self] in
+                    DispatchQueue.main.async {
+                        guard let self = self, self.playbackSegmentID == captureID else { return }
+                        self.handlePlaybackFinished()
+                    }
+                }
+                
+                if wasPlaying {
+                    player.play()
+                }
+            }
+            
+            progress = clampedTime
+            updateNowPlayingInfo()
+            return
+        }
+        
+        // Fall back to AVAudioPlayer
+        if let player = audioPlayer {
+            player.currentTime = clampedTime
+            progress = clampedTime
             updateNowPlayingInfo()
         }
     }
     
     private func handleScrubbing(to time: TimeInterval) {
-        guard let player = audioPlayer else { return }
-        
-        // 1. Update visual progress immediately
-        let clampedTime = max(0, min(time, player.duration))
-        player.currentTime = clampedTime
+        let clampedTime = max(0, min(time, duration))
         progress = clampedTime
         
-        // 2. Calculate velocity
+        // Calculate velocity for scratch sound
         let now = Date()
         let lastTime = lastScrubTime ?? now
         let deltaTime = now.timeIntervalSince(lastTime)
@@ -405,54 +760,19 @@ final class AudioPlayer: NSObject, ObservableObject {
         let lastPos = lastScrubPosition ?? progress
         let deltaPos = clampedTime - lastPos
         
-        // Update state for next calculation
         lastScrubTime = now
         lastScrubPosition = clampedTime
         
-        // Avoid division by zero
-        guard deltaTime > 0 else { return }
+        guard deltaTime > 0, duration > 0 else { return }
         
-        // 3. Normalized speed calculation
-        // Speed = (fraction of track moved) / time
-        // e.g. moving 10% of track in 1 second = 0.1 speed
-        // We use absolute seconds for the math model in ScratchSoundManager,
-        // but the prompt implies normalized to track width/duration.
-        // Let's use: Speed = (pixels moved) / width ... wait, we don't have pixels here.
-        // We have time. Let's map time-velocity to the "scrubSpeed" expected by the manager.
-        // If we move 1 second of audio in 0.1 seconds of real time, that's 10x playback speed.
-        // ScratchSoundManager expects a normalized value where ~0.5 is fast.
-        // Let's deduce a reasonable mapping.
-        // If track is 3 min (180s). moving 10s of audio (5% of track) in 0.1s -> very fast.
-        
-        // Let's try: normalizedSpeed = abs(deltaPos) / (Duration * deltaTime) * ScalingFactor
-        // actually, let's just use raw playback rate equivalent:
-        // rate = deltaPos / deltaTime
-        // normalizedSpeed input for map = rate / someBaseRate
-        
-        // Prompt says: scrubSpeed = Math.abs(currentX - prevX) / progressBarWidth;
-        // In our case: currentX/Width = currentTime/Duration.
-        // So scrubSpeed (per event) = abs(deltaPos / Duration).
-        // BUT, `updateScratch` expects a speed that relates to generated pitch.
-        // The prompt *code* example in requirements uses `scrubSpeed` directly for pitch.
-        // "scrubSpeed = Math.abs(currentX - prevX) / progressBarWidth"
-        // This is "fraction of track traversed per event".
-        // Since `seek` is called continuously by the slider, this is exactly what we need.
-        
-        guard player.duration > 0, deltaTime > 0 else { return }
-        
-        // Calculate velocity: fraction of track per second
-        let fractionTraversed = abs(deltaPos) / player.duration
+        let fractionTraversed = abs(deltaPos) / duration
         let velocity = fractionTraversed / deltaTime
-        
-        print("AudioPlayer: Scrub velocity: \(velocity) (deltaPos: \(deltaPos), deltaTime: \(deltaTime))")
-        
-        // Pass velocity directly to manager
         let directionForward = deltaPos >= 0
         
         ScratchSoundManager.shared.updateScratch(normalizedScrubSpeed: velocity, directionForward: directionForward)
     }
 
-    /// Call when user starts touching the progress bar (so we don’t overwrite progress from the timer).
+    /// Call when user starts touching the progress bar
     func beginScrubbing() {
         isUserScrubbing = true
         wasPlayingBeforeScrub = isPlaying
@@ -461,39 +781,31 @@ final class AudioPlayer: NSObject, ObservableObject {
         
         if JogEffectSettings.shared.isEnabled {
             print("AudioPlayer: beginScrubbing (Jog enabled)")
-            pause() // Pause main audio
-            ScratchSoundManager.shared.beginScratchSession()
+            let scratchBuffer = getAudioBuffer()
+            pause()
+            ScratchSoundManager.shared.beginScratchSession(with: scratchBuffer)
         } else {
             print("AudioPlayer: beginScrubbing (Jog DISABLED)")
         }
     }
 
-    /// Call when user releases the progress bar. Seeks main audio and resumes if was playing.
+    /// Call when user releases the progress bar
     func endScrubbing(finalPosition: TimeInterval?) {
         isUserScrubbing = false
         lastScrubTime = nil
         lastScrubPosition = nil
         
-        // Stop scratch sound
         if JogEffectSettings.shared.isEnabled {
             ScratchSoundManager.shared.endScratchSession()
         }
         
-        guard let player = audioPlayer else { return }
-        player.rate = 1.0
         if let pos = finalPosition {
-            let clamped = max(0, min(pos, player.duration))
-            player.currentTime = clamped
-            progress = clamped
-        } else {
-            progress = player.currentTime
+            performSeek(to: pos)
         }
+        
         if wasPlayingBeforeScrub {
-            player.play()
-            isPlaying = true
-            startTimer()
+            resumePlayback()
         }
-        updateNowPlayingInfo()
     }
 
     func nextTrack() {
@@ -536,15 +848,30 @@ final class AudioPlayer: NSObject, ObservableObject {
     }
 
     private func stop() {
+        playbackSegmentID = UUID()
         cancelCrossfade()
         isUserScrubbing = false
+        
+        // Save current listening session before stopping
+        saveCurrentListeningSession()
+        
+        // End live session tracking
+        PlaybackAnalytics.shared.endLiveSession()
+        
+        // Stop engine
+        playerNode?.stop()
+        audioEngine?.stop()
+        
+        // Stop AVAudioPlayer
         audioPlayer?.stop()
         audioPlayer = nil
+        
         isPlaying = false
         currentURL = nil
         currentTrackIndex = -1
         progress = 0
         duration = 0
+        pausedPosition = 0
         stopTimer()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
 
@@ -555,15 +882,23 @@ final class AudioPlayer: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - File Import (FIXED hash calculation position)
+    // MARK: - File Import
     func importTracks(urls: [URL]) {
         let fileManager = FileManager.default
-        guard let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            print("AudioPlayer: Could not access documents directory")
+        
+        // Try to use Library/Audio first (preferred, no document coordination)
+        var importDir: URL?
+        if let libraryURL = fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first {
+            importDir = libraryURL.appendingPathComponent("Audio")
+        } else if let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first {
+            // Fallback to Documents if Library is unavailable
+            importDir = documentsURL.appendingPathComponent("ImportedAudio")
+        }
+        
+        guard let importDir = importDir else {
+            print("AudioPlayer: Could not access import directory")
             return
         }
-
-        let importDir = documentsURL.appendingPathComponent("ImportedAudio")
 
         if !fileManager.fileExists(atPath: importDir.path) {
             do {
@@ -578,7 +913,6 @@ final class AudioPlayer: NSObject, ObservableObject {
         var skippedCount = 0
 
         for url in urls {
-            // Start accessing BEFORE calculating hash
             let accessing = url.startAccessingSecurityScopedResource()
             defer {
                 if accessing {
@@ -586,20 +920,17 @@ final class AudioPlayer: NSObject, ObservableObject {
                 }
             }
 
-            // Calculate hash of incoming file
             guard let incomingHash = calculateFileHash(url) else {
                 print("AudioPlayer: Could not calculate hash for \(url.lastPathComponent)")
                 continue
             }
 
-            // Check for duplicates
             if fileHashes.values.contains(incomingHash) {
                 print("AudioPlayer: Skipping duplicate file \(url.lastPathComponent)")
                 skippedCount += 1
                 continue
             }
 
-            // Generate unique filename
             let sanitizedFileName = url.lastPathComponent
                 .replacingOccurrences(of: "/", with: "-")
                 .replacingOccurrences(of: ":", with: "-")
@@ -622,8 +953,15 @@ final class AudioPlayer: NSObject, ObservableObject {
                 }
 
                 try fileManager.copyItem(at: url, to: destURL)
+                
+                // Disable document collaboration and iCloud sync for this file
+                var attributes = try fileManager.attributesOfItem(atPath: destURL.path)
+                attributes[FileAttributeKey.protectionKey] = FileProtectionType.none
+                try fileManager.setAttributes(attributes, ofItemAtPath: destURL.path)
+                
+                // Prevent document coordination
+                try (destURL as NSURL).setResourceValue(NSNumber(value: true), forKey: URLResourceKey(rawValue: "NSURLIsExcludedFromBackupKey") as URLResourceKey)
 
-                // Store hash for the destination file
                 fileHashes[destURL.lastPathComponent] = incomingHash
 
                 DispatchQueue.main.async {
@@ -644,23 +982,7 @@ final class AudioPlayer: NSObject, ObservableObject {
         print("AudioPlayer: Import complete - Added: \(addedCount), Skipped: \(skippedCount)")
     }
 
-    /// Called when user chooses "Keep" for a shared track (e.g. from Telegram). Imports and optionally plays.
-    func confirmKeepSharedTrack() {
-        guard let url = pendingSharedTrackURL else { return }
-        importTracks(urls: [url])
-        pendingSharedTrackURL = nil
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            guard let self = self, let lastTrack = self.tracks.last else { return }
-            self.play(url: lastTrack)
-        }
-    }
 
-    /// Called when user chooses "Don't keep" or dismisses the shared-track prompt.
-    func clearPendingSharedTrack() {
-        pendingSharedTrackURL = nil
-    }
-
-    /// Resolves the file URL for a track (used for sharing)
     func resolvedURL(for url: URL) -> URL? {
         resolveURL(fileName: url.lastPathComponent)
     }
@@ -668,6 +990,17 @@ final class AudioPlayer: NSObject, ObservableObject {
     func play(url: URL) {
         cancelCrossfade()
         let fileName = url.lastPathComponent
+        
+        // Save current listening session before switching tracks
+        saveCurrentListeningSession()
+        
+        // Reset analytics for new track
+        accruedListenDuration = 0
+        playbackStartTime = isPlaying ? Date() : nil
+        hasRecordedCurrentSession = false  // Allow recording of the new track's session
+        
+        // Start live session tracking
+        PlaybackAnalytics.shared.startLiveSession(trackId: fileName, accruedDuration: 0)
 
         if let previousURL = currentSecurityURL, isAccessingSecurityResource {
             previousURL.stopAccessingSecurityScopedResource()
@@ -680,7 +1013,8 @@ final class AudioPlayer: NSObject, ObservableObject {
             return
         }
 
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
             let fileManager = FileManager.default
 
             guard fileManager.fileExists(atPath: resolvedURL.path) else {
@@ -689,41 +1023,127 @@ final class AudioPlayer: NSObject, ObservableObject {
                 return
             }
 
+            // Try to use AVAudioEngine for EQ support
             do {
-                let fileData = try Data(contentsOf: resolvedURL)
-                let fileTypeHint = self.getFileTypeHint(for: resolvedURL)
-
+                let file = try AVAudioFile(forReading: resolvedURL)
+                
                 DispatchQueue.main.async {
-                    do {
-                        self.isUserScrubbing = false
-                        self.audioPlayer = try AVAudioPlayer(data: fileData, fileTypeHint: fileTypeHint)
-                        self.audioPlayer?.delegate = self
-                        self.audioPlayer?.enableRate = true
-                        self.audioPlayer?.prepareToPlay()
-                        self.audioPlayer?.play()
-
-                        self.currentURL = url
-                        let queue = self.getPlayQueue()
-                        self.currentPlayQueueIndex = queue.firstIndex(of: url) ?? -1
-                        self.currentTrackIndex = self.tracks.firstIndex(of: url) ?? -1
-                        self.isPlaying = true
-                        self.duration = self.audioPlayer?.duration ?? 0
-
-                        self.currentSecurityURL = resolvedURL
-                        self.isAccessingSecurityResource = false
-
-                        self.startTimer()
-                        self.updateNowPlayingInfo()
-
-                        print("AudioPlayer: Successfully playing \(fileName)")
-                    } catch {
-                        print("AudioPlayer: Failed to create audio player for \(fileName) - \(error.localizedDescription)")
-                    }
+                    self.playWithEngine(file: file, url: url)
                 }
             } catch {
-                print("AudioPlayer: Failed to read file data for \(fileName) - \(error.localizedDescription)")
+                // Fall back to AVAudioPlayer
+                print("AudioPlayer: Engine failed, falling back to AVAudioPlayer: \(error)")
+                
+                do {
+                    let fileData = try Data(contentsOf: resolvedURL)
+                    let fileTypeHint = self.getFileTypeHint(for: resolvedURL)
+                    
+                    DispatchQueue.main.async {
+                        self.playWithAudioPlayer(data: fileData, fileTypeHint: fileTypeHint, url: url)
+                    }
+                } catch {
+                    print("AudioPlayer: Failed to read file data for \(fileName) - \(error.localizedDescription)")
+                }
             }
         }
+    }
+    
+    private func playWithEngine(file: AVAudioFile, url: URL) {
+        playbackSegmentID = UUID() // Invalidate old segment
+        isUserScrubbing = false
+        teardownAudioEngine()
+        setupAudioEngine()
+        
+        guard audioEngine != nil,
+              let player = playerNode,
+              eqNode != nil else {
+            print("AudioPlayer: Engine setup failed")
+            return
+        }
+        
+        audioFile = file
+        audioFormat = file.processingFormat
+        pausedPosition = 0
+        
+        // Connect with the file's format
+        connectAndStartEngine(format: file.processingFormat)
+        
+        // Schedule the file
+        playbackSegmentID = UUID()
+        let captureID = playbackSegmentID
+        
+        player.scheduleFile(file, at: nil) { [weak self] in
+            DispatchQueue.main.async {
+                guard let self = self, self.playbackSegmentID == captureID else { return }
+                self.handlePlaybackFinished()
+            }
+        }
+        
+        player.play()
+        
+        currentURL = url
+        let queue = getPlayQueue()
+        currentPlayQueueIndex = queue.firstIndex(of: url) ?? -1
+        currentTrackIndex = tracks.firstIndex(of: url) ?? -1
+        isPlaying = true
+        duration = Double(file.length) / file.processingFormat.sampleRate
+        
+        // Update live session with actual duration
+        playbackStartTime = Date()
+        
+        currentSecurityURL = nil
+        isAccessingSecurityResource = false
+        
+        startTimer()
+        updateNowPlayingInfo()
+        
+        print("AudioPlayer: ✅ Playing with AVAudioEngine + EQ: \(url.lastPathComponent)")
+    }
+    
+    private func playWithAudioPlayer(data: Data, fileTypeHint: String?, url: URL) {
+        do {
+            isUserScrubbing = false
+            audioPlayer = try AVAudioPlayer(data: data, fileTypeHint: fileTypeHint)
+            audioPlayer?.delegate = self
+            audioPlayer?.enableRate = true
+            audioPlayer?.prepareToPlay()
+            audioPlayer?.play()
+
+            currentURL = url
+            let queue = getPlayQueue()
+            currentPlayQueueIndex = queue.firstIndex(of: url) ?? -1
+            currentTrackIndex = tracks.firstIndex(of: url) ?? -1
+            isPlaying = true
+            duration = audioPlayer?.duration ?? 0
+
+            currentSecurityURL = nil
+            isAccessingSecurityResource = false
+            
+            // Update live session with actual duration
+            playbackStartTime = Date()
+
+            startTimer()
+            updateNowPlayingInfo()
+
+            print("AudioPlayer: Playing with AVAudioPlayer (no EQ): \(url.lastPathComponent)")
+        } catch {
+            print("AudioPlayer: Failed to create audio player - \(error.localizedDescription)")
+        }
+    }
+    
+    private func handlePlaybackFinished() {
+        if isCrossfading { return }
+        // Only record if we haven't already saved this session
+        if !hasRecordedCurrentSession, let url = currentURL {
+            let totalListenTime = accruedListenDuration + (playbackStartTime.map { Date().timeIntervalSince($0) } ?? 0)
+            PlaybackAnalytics.shared.recordPlay(
+                trackId: url.lastPathComponent,
+                duration: duration,
+                listenDuration: totalListenTime
+            )
+            hasRecordedCurrentSession = true
+        }
+        nextTrack()
     }
 
     // MARK: - Helper Methods
@@ -760,19 +1180,15 @@ final class AudioPlayer: NSObject, ObservableObject {
 
     private func resolveURL(fileName: String) -> URL? {
         let fileManager = FileManager.default
-        // 1. Check ImportedAudio in Documents
         if let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first {
             let candidate = docs.appendingPathComponent("ImportedAudio").appendingPathComponent(fileName)
             if fileManager.fileExists(atPath: candidate.path) {
                 return candidate
             }
         }
-        // 2. Check Bundle (for demo tracks)
-        // Try exact match first, then with extensions if missing
         if let bundlePath = Bundle.main.path(forResource: fileName, ofType: nil) {
             return URL(fileURLWithPath: bundlePath)
         }
-        // Try common extensions if filename has none
         let extensions = ["mp3", "m4a", "wav"]
         for ext in extensions {
              if let bundlePath = Bundle.main.path(forResource: fileName, ofType: ext) {
@@ -834,16 +1250,21 @@ final class AudioPlayer: NSObject, ObservableObject {
     }
 
     private func updateProgress() {
-        guard let player = audioPlayer else {
-            progress = 0
-            return
-        }
         DispatchQueue.main.async {
             if !self.isUserScrubbing {
-                self.progress = player.currentTime
+                self.progress = self.getCurrentPlaybackTime()
             }
-            self.duration = player.duration
-            self.isPlaying = player.isPlaying
+            
+            // Disable auto-sync of isPlaying to prevent UI flickering
+            // The explicit state management in play/pause/stop is more reliable
+            /*
+            if let player = self.playerNode {
+                self.isPlaying = player.isPlaying
+            } else if let player = self.audioPlayer {
+                self.isPlaying = player.isPlaying
+            }
+            */
+            
             self.checkCrossfadeStart()
         }
     }
@@ -851,19 +1272,14 @@ final class AudioPlayer: NSObject, ObservableObject {
     // MARK: - Crossfade
     private var crossfadeSettings: CrossfadeSettings { CrossfadeSettings.shared }
 
-    /// Quintic smoothstep: smoother start/end than cubic (Apple Music–style seamless feel)
     private static func smoothstepQuintic(_ t: Float) -> Float {
         let x = max(0, min(1, t))
         return x * x * x * (x * (x * 6 - 15) + 10)
     }
     
-    // MARK: - Crossfade Curves
-    
-    /// Linear fade
     private static func linearOut(_ t: Float) -> Float { 1.0 - t }
     private static func linearIn(_ t: Float) -> Float { t }
     
-    /// Ease In/Out (Apple Music style)
     private static func easeInOutOut(_ t: Float) -> Float {
         let s = smoothstepQuintic(t)
         return 1.0 - s
@@ -872,7 +1288,6 @@ final class AudioPlayer: NSObject, ObservableObject {
         return smoothstepQuintic(t)
     }
     
-    /// Constant Power (DJ-style equal loudness)
     private static func constantPowerOut(_ t: Float) -> Float {
         return cos(t * .pi / 2)
     }
@@ -880,7 +1295,6 @@ final class AudioPlayer: NSObject, ObservableObject {
         return sin(t * .pi / 2)
     }
     
-    /// Get fade values based on selected curve
     private func getFadeVolumes(t: Float) -> (outVol: Float, inVol: Float) {
         switch crossfadeSettings.curve {
         case .linear:
@@ -895,24 +1309,21 @@ final class AudioPlayer: NSObject, ObservableObject {
     private func checkCrossfadeStart() {
         guard crossfadeSettings.isEnabled,
               !isCrossfading,
-              let current = audioPlayer,
               getPlayQueue().count > 1,
-              let currentURL = currentURL,
+              currentURL != nil,
               currentPlayQueueIndex >= 0 else { return }
         let queue = getPlayQueue()
-        let remaining = current.duration - current.currentTime
-        let duration = crossfadeSettings.duration
+        let remaining = duration - progress
+        let fadeDuration = crossfadeSettings.duration
         let nextIndex = (currentPlayQueueIndex + 1) % queue.count
         let nextURL = queue[nextIndex]
 
-        // Preload well ahead (up to 8s or 3× fade) so next track is always ready – no hitch
-        let preloadWhenRemaining = min(8.0, duration * 3.0)
-        if remaining <= preloadWhenRemaining, remaining > duration + Self.crossfadeLeadTime, crossfadePreloadedURL != nextURL {
+        let preloadWhenRemaining = min(8.0, fadeDuration * 3.0)
+        if remaining <= preloadWhenRemaining, remaining > fadeDuration + Self.crossfadeLeadTime, crossfadePreloadedURL != nextURL {
             preloadNextTrackForCrossfade(url: nextURL)
         }
 
-        // Start crossfade with small lead time so next track is already playing when we ramp volume (seamless)
-        let triggerWhenRemaining = duration + Self.crossfadeLeadTime
+        let triggerWhenRemaining = fadeDuration + Self.crossfadeLeadTime
         guard remaining <= triggerWhenRemaining, remaining > 0 else { return }
         beginCrossfade(to: nextURL)
     }
@@ -941,7 +1352,7 @@ final class AudioPlayer: NSObject, ObservableObject {
     private func beginCrossfade(to nextURL: URL) {
         isCrossfading = true
         crossfadeOutURL = currentURL
-        crossfadeOutDuration = audioPlayer?.duration ?? 0
+        crossfadeOutDuration = duration
         crossfadeInURL = nextURL
 
         let usePreloaded = crossfadePreloadedURL == nextURL, preloaded = crossfadePreloadedPlayer
@@ -1001,30 +1412,51 @@ final class AudioPlayer: NSObject, ObservableObject {
     private func updateCrossfadeVolumes() {
         guard let start = crossfadeStartTime else { return }
         let elapsed = Date().timeIntervalSince(start)
-        let duration = crossfadeSettings.duration
-        if elapsed >= duration {
+        let fadeDuration = crossfadeSettings.duration
+        if elapsed >= fadeDuration {
             audioPlayer?.volume = 1.0
             crossfadeNextPlayer?.volume = 1.0
             finishCrossfade()
             return
         }
-        let t = Float(elapsed / duration)
+        let t = Float(elapsed / fadeDuration)
         let (outVol, inVol) = getFadeVolumes(t: t)
         audioPlayer?.volume = outVol
+        audioEngine?.mainMixerNode.outputVolume = outVol
         crossfadeNextPlayer?.volume = inVol
     }
 
     private func finishCrossfade() {
+        playbackSegmentID = UUID() // Invalidate pending completion handlers from engine stop
         crossfadeTimer?.invalidate()
         crossfadeTimer = nil
-        if let outURL = crossfadeOutURL {
+        
+        // End live session for outgoing track
+        PlaybackAnalytics.shared.endLiveSession()
+        
+        if !hasRecordedCurrentSession, let outURL = crossfadeOutURL {
+            // For crossfade, we assume the track played to the end (or near it)
+            // But let's use the actual accrued time if available
+            let totalListenTime = accruedListenDuration + (playbackStartTime.map { Date().timeIntervalSince($0) } ?? 0)
             PlaybackAnalytics.shared.recordPlay(
                 trackId: outURL.lastPathComponent,
-                duration: crossfadeOutDuration
+                duration: crossfadeOutDuration,
+                listenDuration: totalListenTime
             )
+            hasRecordedCurrentSession = true
         }
-        audioPlayer?.stop()
+        
+        // Stop engine and old player
+        playerNode?.stop()
+        audioEngine?.stop()
+        audioFile = nil // Clear old file so getCurrentPlaybackTime falls back to audioPlayer
+        
+        // CRITICAL: Clear delegate from old player BEFORE stopping to prevent stale callbacks
+        let oldPlayer = audioPlayer
         audioPlayer = nil
+        oldPlayer?.delegate = nil
+        oldPlayer?.stop()
+        
         audioPlayer = crossfadeNextPlayer
         crossfadeNextPlayer = nil
         audioPlayer?.delegate = self
@@ -1033,6 +1465,12 @@ final class AudioPlayer: NSObject, ObservableObject {
             let queue = getPlayQueue()
             currentPlayQueueIndex = queue.firstIndex(of: url) ?? 0
             currentTrackIndex = tracks.firstIndex(of: url) ?? -1
+            
+            // Reset analytics for new track and start live session
+            accruedListenDuration = 0
+            playbackStartTime = Date()
+            hasRecordedCurrentSession = false
+            PlaybackAnalytics.shared.startLiveSession(trackId: url.lastPathComponent, accruedDuration: 0)
         }
         duration = audioPlayer?.duration ?? 0
         progress = 0
@@ -1058,7 +1496,6 @@ final class AudioPlayer: NSObject, ObservableObject {
     }
 
     // MARK: - Play queue (label filter)
-    /// Returns tracks to use for playback: all tracks, or only those with at least one selected label.
     func getPlayQueue() -> [URL] {
         guard !labelFilterIds.isEmpty else { return tracks }
         let meta = MusicMetadataManager.shared
@@ -1109,19 +1546,32 @@ final class AudioPlayer: NSObject, ObservableObject {
         }
 
         let fileManager = FileManager.default
-        guard let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            return
-        }
-
-        let importDir = documentsURL.appendingPathComponent("ImportedAudio")
         var loadedTracks: [URL] = []
+        
+        // Try to find tracks in both Library and Documents directories
+        let possibleDirs: [URL] = {
+            var dirs: [URL] = []
+            
+            // Check Library/Audio first
+            if let libraryURL = fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first {
+                dirs.append(libraryURL.appendingPathComponent("Audio"))
+            }
+            
+            // Check Documents/ImportedAudio for legacy files
+            if let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first {
+                dirs.append(documentsURL.appendingPathComponent("ImportedAudio"))
+            }
+            
+            return dirs
+        }()
 
         for fileName in fileNames {
-            let fileURL = importDir.appendingPathComponent(fileName)
-            if fileManager.fileExists(atPath: fileURL.path) {
-                loadedTracks.append(fileURL)
-            } else {
-                print("AudioPlayer: Track not found: \(fileName)")
+            for dir in possibleDirs {
+                let fileURL = dir.appendingPathComponent(fileName)
+                if fileManager.fileExists(atPath: fileURL.path) {
+                    loadedTracks.append(fileURL)
+                    break  // Found file, move to next fileName
+                }
             }
         }
 
@@ -1157,11 +1607,15 @@ extension AudioPlayer: AVAudioPlayerDelegate {
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         if isCrossfading { return }
         if flag {
-            if let url = currentURL {
+            // Only record if we haven't already saved this session
+            if !hasRecordedCurrentSession, let url = currentURL {
+                let totalListenTime = accruedListenDuration + (playbackStartTime.map { Date().timeIntervalSince($0) } ?? 0)
                 PlaybackAnalytics.shared.recordPlay(
                     trackId: url.lastPathComponent,
-                    duration: player.duration
+                    duration: player.duration,
+                    listenDuration: totalListenTime
                 )
+                hasRecordedCurrentSession = true
             }
             nextTrack()
         }

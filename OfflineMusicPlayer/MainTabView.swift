@@ -4,7 +4,7 @@ struct MainTabView: View {
     @EnvironmentObject var player: AudioPlayer
 
     private var showKeepSharedTrackSheet: Bool {
-        player.pendingSharedTrackURL != nil
+        !player.pendingSharedTrackURLs.isEmpty
     }
 
     var body: some View {
@@ -29,16 +29,16 @@ struct MainTabView: View {
         }
         .sheet(isPresented: Binding(
             get: { showKeepSharedTrackSheet },
-            set: { if !$0 { player.clearPendingSharedTrack() } }
+            set: { if !$0 { self.player.clearPendingSharedTracks() } }
         )) {
-            if let url = player.pendingSharedTrackURL {
+            if !player.pendingSharedTrackURLs.isEmpty {
                 KeepSharedTrackSheet(
-                    fileName: url.lastPathComponent,
+                    fileNames: player.pendingSharedTrackURLs.map { $0.lastPathComponent },
                     onKeep: {
-                        player.confirmKeepSharedTrack()
+                        self.player.confirmKeepSharedTracks()
                     },
                     onDontKeep: {
-                        player.clearPendingSharedTrack()
+                        self.player.clearPendingSharedTracks()
                     }
                 )
             }
@@ -48,29 +48,40 @@ struct MainTabView: View {
 
 // MARK: - Keep shared track prompt (e.g. from Telegram)
 struct KeepSharedTrackSheet: View {
-    let fileName: String
+    let fileNames: [String]
     let onKeep: () -> Void
     let onDontKeep: () -> Void
 
     var body: some View {
         NavigationView {
             VStack(spacing: 24) {
-                Image(systemName: "music.note")
+                Image(systemName: "music.note.list")
                     .font(.system(size: 50))
                     .foregroundStyle(.tint)
 
                 Text("Add to library?")
-                    .font(.title2)
-                    .fontWeight(.semibold)
+                    .font(.title2.bold())
 
-                Text(fileName)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
+                if fileNames.count == 1 {
+                    Text(fileNames[0])
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                } else {
+                    Text("\(fileNames.count) audio files")
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                    
+                    Text(fileNames.prefix(3).joined(separator: "\n") + (fileNames.count > 3 ? "\n...and \(fileNames.count - 3) more" : ""))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
 
-                Text("This file was shared to the app.")
+                Text("These files were shared to the app.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -82,7 +93,7 @@ struct KeepSharedTrackSheet: View {
                     }
                     .buttonStyle(.bordered)
 
-                    Button("Keep") {
+                    Button("Keep All") {
                         onKeep()
                     }
                     .buttonStyle(.borderedProminent)
@@ -92,7 +103,7 @@ struct KeepSharedTrackSheet: View {
                 Spacer()
             }
             .padding(.top, 32)
-            .navigationTitle("Shared track")
+            .navigationTitle("Shared Audio")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
