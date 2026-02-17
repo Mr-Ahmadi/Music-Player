@@ -832,15 +832,19 @@ final class AudioPlayer: NSObject, ObservableObject {
 
     // MARK: - Track Management
     func remove(atOffsets offsets: IndexSet) {
-        let tracksToRemove = offsets.map { tracks[$0] }
+        let validOffsets = IndexSet(offsets.filter { $0 >= 0 && $0 < tracks.count })
+        guard !validOffsets.isEmpty else { return }
+
+        let tracksToRemove = validOffsets.map { tracks[$0] }
+        let removingCurrentTrack = currentURL.map { tracksToRemove.contains($0) } ?? false
+
+        tracks.remove(atOffsets: validOffsets)
 
         for url in tracksToRemove {
-            removeTrack(url: url)
+            removeTrack(url: url, removeFromTracks: false)
         }
 
-        tracks.remove(atOffsets: offsets)
-
-        if let currentURL = currentURL, !tracks.contains(currentURL) {
+        if removingCurrentTrack {
             stop()
         } else if let currentURL = currentURL, let newIndex = tracks.firstIndex(of: currentURL) {
             currentTrackIndex = newIndex
@@ -1147,10 +1151,10 @@ final class AudioPlayer: NSObject, ObservableObject {
     }
 
     // MARK: - Helper Methods
-    private func removeTrack(url: URL) {
+    private func removeTrack(url: URL, removeFromTracks: Bool = true) {
         let fileName = url.lastPathComponent
 
-        if let index = tracks.firstIndex(of: url) {
+        if removeFromTracks, let index = tracks.firstIndex(of: url) {
             tracks.remove(at: index)
         }
 
@@ -1159,18 +1163,38 @@ final class AudioPlayer: NSObject, ObservableObject {
 
         fileHashes.removeValue(forKey: fileName)
         saveFileHashes()
+        MusicMetadataManager.shared.removeMusicMetadata(fileName: fileName)
 
         let fileManager = FileManager.default
-        if let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first {
-            let importDir = documentsURL.appendingPathComponent("ImportedAudio")
-            let fileURL = importDir.appendingPathComponent(fileName)
-
+        var deleted = false
+        
+        // Try deleting from Library/Audio (new location)
+        if let libraryURL = fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first {
+            let fileURL = libraryURL.appendingPathComponent("Audio").appendingPathComponent(fileName)
             if fileManager.fileExists(atPath: fileURL.path) {
                 do {
                     try fileManager.removeItem(at: fileURL)
-                    print("AudioPlayer: Deleted file \(fileName)")
+                    print("AudioPlayer: Deleted file from Library/Audio: \(fileName)")
+                    deleted = true
                 } catch {
-                    print("AudioPlayer: Failed to delete file \(fileName) - \(error)")
+                    print("AudioPlayer: Failed to delete file from Library/Audio \(fileName) - \(error)")
+                }
+            }
+        }
+        
+        // Try deleting from Documents/ImportedAudio (legacy location)
+        if !deleted {
+            if let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first {
+                let importDir = documentsURL.appendingPathComponent("ImportedAudio")
+                let fileURL = importDir.appendingPathComponent(fileName)
+
+                if fileManager.fileExists(atPath: fileURL.path) {
+                    do {
+                        try fileManager.removeItem(at: fileURL)
+                        print("AudioPlayer: Deleted file from ImportedAudio: \(fileName)")
+                    } catch {
+                        print("AudioPlayer: Failed to delete file from ImportedAudio \(fileName) - \(error)")
+                    }
                 }
             }
         }
@@ -1180,6 +1204,16 @@ final class AudioPlayer: NSObject, ObservableObject {
 
     private func resolveURL(fileName: String) -> URL? {
         let fileManager = FileManager.default
+        
+        // 1. Check Library/Audio (Preferred)
+        if let libraryURL = fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first {
+            let candidate = libraryURL.appendingPathComponent("Audio").appendingPathComponent(fileName)
+            if fileManager.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+        }
+        
+        // 2. Check Documents/ImportedAudio (Legacy)
         if let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first {
             let candidate = docs.appendingPathComponent("ImportedAudio").appendingPathComponent(fileName)
             if fileManager.fileExists(atPath: candidate.path) {
@@ -1576,8 +1610,34 @@ final class AudioPlayer: NSObject, ObservableObject {
         }
 
         DispatchQueue.main.async {
-            self.tracks = loadedTracks
-            print("AudioPlayer: Loaded \(loadedTracks.count) tracks")
+            // Merge with existing tracks to prevent overriding imports that happened while loading
+            // This fixes the "disappearing tracks" bug if import happens before load finishes
+            let currentTracksSet = Set(self.tracks)
+            let newTracks = loadedTracks.filter { !currentTracksSet.contains($0) }
+            self.tracks.append(contentsOf: newTracks)
+            
+            // Self-healing: Ensure all tracks have hashes for duplicate detection
+            self.ensureHashesForTracks()
+            
+            print("AudioPlayer: Loaded \(loadedTracks.count) tracks (Total: \(self.tracks.count))")
+        }
+    }
+    
+    private func ensureHashesForTracks() {
+        var updated = false
+        for trackURL in tracks {
+            let fileName = trackURL.lastPathComponent
+            if fileHashes[fileName] == nil {
+                if let hash = calculateFileHash(trackURL) {
+                    fileHashes[fileName] = hash
+                    updated = true
+                    print("AudioPlayer: Generated missing hash for \(fileName)")
+                }
+            }
+        }
+        
+        if updated {
+            saveFileHashes()
         }
     }
 

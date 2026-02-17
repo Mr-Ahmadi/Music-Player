@@ -18,7 +18,15 @@ struct PlayerView: View {
             // Playback controls
             controlsView
         }
-        .padding()
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color(UIColor.secondarySystemGroupedBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
     }
     
     // MARK: - Subviews
@@ -30,7 +38,7 @@ struct PlayerView: View {
                     ZStack {
                         RoundedRectangle(cornerRadius: 8)
                             .fill(LinearGradient(
-                                gradient: Gradient(colors: [.blue.opacity(0.6), .purple.opacity(0.6)]),
+                                gradient: Gradient(colors: [Color(red: 0.07, green: 0.75, blue: 0.89), Color(red: 0.04, green: 0.52, blue: 0.82)]),
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ))
@@ -77,7 +85,7 @@ struct PlayerView: View {
                 HStack {
                     ZStack {
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.gray.opacity(0.2))
+                            .fill(Color(UIColor.tertiarySystemGroupedBackground))
                         
                         Image(systemName: "music.note.list")
                             .font(.title3)
@@ -117,6 +125,7 @@ struct PlayerView: View {
             )
             .disabled(player.currentURL == nil)
             .accentColor(.accentColor)
+            .tint(.accentColor)
             
             HStack {
                 Text(timeString(player.progress))
@@ -140,7 +149,7 @@ struct PlayerView: View {
             Button(action: { player.previousTrack() }) {
                 Image(systemName: "backward.fill")
                     .font(.title2)
-                    .foregroundColor(player.tracks.isEmpty ? .secondary : .primary)
+                    .foregroundColor(player.tracks.isEmpty ? .secondary.opacity(0.55) : .primary)
             }
             .disabled(player.tracks.isEmpty)
             .accessibilityLabel("Previous track")
@@ -164,7 +173,7 @@ struct PlayerView: View {
             Button(action: { player.nextTrack() }) {
                 Image(systemName: "forward.fill")
                     .font(.title2)
-                    .foregroundColor(player.tracks.isEmpty ? .secondary : .primary)
+                    .foregroundColor(player.tracks.isEmpty ? .secondary.opacity(0.55) : .primary)
             }
             .disabled(player.tracks.isEmpty)
             .accessibilityLabel("Next track")

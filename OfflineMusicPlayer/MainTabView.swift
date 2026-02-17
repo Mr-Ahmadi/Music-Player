@@ -27,6 +27,9 @@ struct MainTabView: View {
                     Label("Settings", systemImage: "gear")
                 }
         }
+        .tint(.accentColor)
+        .toolbarBackground(.visible, for: .tabBar)
+        .toolbarBackground(Color(UIColor.systemBackground), for: .tabBar)
         .sheet(isPresented: Binding(
             get: { showKeepSharedTrackSheet },
             set: { if !$0 { self.player.clearPendingSharedTracks() } }

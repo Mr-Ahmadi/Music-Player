@@ -67,8 +67,17 @@ final class MusicMetadataManager: ObservableObject {
             .removingExtension()
         
         let newMetadata = MusicMetadata(id: fileName, displayName: displayName)
-        metadata[fileName] = newMetadata
-        saveMetadata()
+        
+        // Schedule update asynchronously to avoid "Publishing changes from within view updates"
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            // Check again in case it was added in the meantime
+            if self.metadata[fileName] == nil {
+                self.metadata[fileName] = newMetadata
+                self.saveMetadata()
+            }
+        }
+        
         return newMetadata
     }
     

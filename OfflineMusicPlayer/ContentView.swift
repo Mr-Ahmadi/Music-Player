@@ -8,6 +8,8 @@ struct ContentView: View {
     @State private var shareURL: ShareableURLWrapper?
     @State private var selection = Set<URL>()
     @State private var isEditingSelection = false
+    
+    private let pageBackground = Color(UIColor.systemGroupedBackground)
 
     var filteredTracks: [URL] {
         if searchText.isEmpty {
@@ -39,17 +41,21 @@ struct ContentView: View {
                     }
                 }
 
-                Divider()
-
                 PlayerView()
                     .environmentObject(player)
-                    .background(Color(UIColor.secondarySystemBackground))
+                    .padding(.horizontal, 14)
+                    .padding(.top, 8)
+                    .padding(.bottom, 10)
+                    .background(pageBackground)
             }
-            .navigationTitle("Offline Music")
+            .background(pageBackground.ignoresSafeArea())
+            .navigationTitle("Library")
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarBackground(pageBackground, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: { showingImporter = true }) {
-                        Label("Import", systemImage: "square.and.arrow.down")
+                        Label("Import", systemImage: "plus")
                     }
                 }
 
@@ -62,7 +68,7 @@ struct ContentView: View {
                             }) {
                                 Image(systemName: "square.and.arrow.up")
                             }
-                            
+
                             Button(action: {
                                 selection.removeAll()
                             }) {
@@ -70,15 +76,15 @@ struct ContentView: View {
                                     .font(.caption)
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 4)
-                                    .background(Color.accentColor.opacity(0.2))
-                                    .cornerRadius(6)
+                                    .background(Color.secondary.opacity(0.16))
+                                    .cornerRadius(8)
                             }
                         }
                     } else {
                         Button(action: {
                             isEditingSelection = !isEditingSelection
                         }) {
-                            Image(systemName: isEditingSelection ? "checkmark" : "square.on.square")
+                            Image(systemName: isEditingSelection ? "checkmark.circle.fill" : "checklist")
                         }
                         .disabled(player.tracks.isEmpty)
                     }
@@ -106,12 +112,16 @@ struct ContentView: View {
         VStack(spacing: 20) {
             Spacer()
 
-            Image(systemName: "music.note.list")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 100, height: 100)
-                .foregroundStyle(.tint)
-                .padding()
+            ZStack {
+                RoundedRectangle(cornerRadius: 24)
+                    .fill(Color(UIColor.secondarySystemGroupedBackground))
+                    .frame(width: 128, height: 128)
+                Image(systemName: "music.note.list")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 64, height: 64)
+                    .foregroundStyle(.tint)
+            }
 
             Text("No Tracks")
                 .font(.title2)
@@ -124,12 +134,9 @@ struct ContentView: View {
                 .padding(.horizontal)
 
             Button(action: { showingImporter = true }) {
-                Label("Import Audio Files", systemImage: "square.and.arrow.down")
-                    .padding()
-                    .background(Color.accentColor)
-                    .foregroundColor(.white)
-                    .cornerRadius(10)
+                Label("Import Audio Files", systemImage: "plus")
             }
+            .buttonStyle(.borderedProminent)
             .padding(.top)
 
             Spacer()
@@ -146,7 +153,6 @@ struct ContentView: View {
 
             Text("No Tracks Found")
                 .font(.headline)
-                .foregroundColor(.secondary)
 
             Text("Try adjusting your search")
                 .font(.subheadline)
@@ -183,22 +189,13 @@ struct ContentView: View {
                 deleteItems(at: indices)
             }
             .onMove { indices, destination in
-                // Find actual indices in the full track list
-                let tracksToMove = indices.map { filteredTracks[$0] }
-                var newTracks = player.tracks
-
-                // Remove tracks from current positions
-                newTracks.removeAll { tracksToMove.contains($0) }
-
-                // Insert at new position
-                let insertIndex = min(destination, newTracks.count)
-                newTracks.insert(contentsOf: tracksToMove, at: insertIndex)
-
-                player.tracks = newTracks
+                moveItemsInFilteredList(from: indices, to: destination)
             }
         }
         .listStyle(PlainListStyle())
         .environment(\.editMode, .constant(isEditingSelection ? .active : .inactive))
+        .scrollContentBackground(.hidden)
+        .background(pageBackground)
     }
 
     // MARK: - Helper Methods
@@ -206,7 +203,37 @@ struct ContentView: View {
         // Convert filtered indices to actual track indices
         let tracksToDelete = offsets.map { filteredTracks[$0] }
         let actualIndices = IndexSet(tracksToDelete.compactMap { player.tracks.firstIndex(of: $0) })
+        selection.subtract(tracksToDelete)
         player.remove(atOffsets: actualIndices)
+    }
+
+    private func moveItemsInFilteredList(from indices: IndexSet, to destination: Int) {
+        let movingTracks = indices.map { filteredTracks[$0] }
+        let filteredWithoutMoving = filteredTracks.enumerated()
+            .filter { !indices.contains($0.offset) }
+            .map(\.element)
+        let destinationInFiltered = min(destination, filteredWithoutMoving.count)
+
+        var reorderedFiltered = filteredWithoutMoving
+        reorderedFiltered.insert(contentsOf: movingTracks, at: destinationInFiltered)
+
+        let filteredSet = Set(filteredTracks)
+        let nonFiltered = player.tracks.filter { !filteredSet.contains($0) }
+        var filteredIterator = reorderedFiltered.makeIterator()
+        var nonFilteredIterator = nonFiltered.makeIterator()
+
+        var merged: [URL] = []
+        merged.reserveCapacity(player.tracks.count)
+
+        for original in player.tracks {
+            if filteredSet.contains(original), let next = filteredIterator.next() {
+                merged.append(next)
+            } else if let next = nonFilteredIterator.next() {
+                merged.append(next)
+            }
+        }
+
+        player.tracks = merged
     }
 }
 
@@ -252,7 +279,6 @@ struct TrackRow: View {
                     Text(metadata.displayName)
                         .lineLimit(2)
                         .font(isPlaying ? .body.bold() : .body)
-                        .foregroundColor(isPlaying ? .accentColor : .primary)
 
                     HStack(spacing: 4) {
                         Text(url.pathExtension.uppercased())
@@ -279,12 +305,16 @@ struct TrackRow: View {
 
                 Spacer()
 
-                // Chevron
-                Image(systemName: "chevron.right")
+                Image(systemName: isPlaying ? "speaker.wave.2.fill" : "chevron.right")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(isPlaying ? .accentColor : .secondary)
             }
-            .padding(.vertical, 4)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(isPlaying ? Color.accentColor.opacity(0.14) : Color(UIColor.secondarySystemGroupedBackground))
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
@@ -336,8 +366,8 @@ struct SearchBar: View {
                 }
             }
             .padding(8)
-            .background(Color(UIColor.secondarySystemBackground))
-            .cornerRadius(10)
+            .background(Color(UIColor.secondarySystemGroupedBackground))
+            .cornerRadius(12)
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
