@@ -71,6 +71,8 @@ final class AudioPlayer: NSObject, ObservableObject {
     private var engineStartTime: AVAudioTime?
     private var pausedPosition: AVAudioFramePosition = 0
     private var playbackSegmentID = UUID()
+    /// Identifies the latest requested play action so stale async work can't start old tracks.
+    private var playRequestID = UUID()
     
     // Analytics
     private var playbackStartTime: Date?
@@ -852,6 +854,7 @@ final class AudioPlayer: NSObject, ObservableObject {
     }
 
     private func stop() {
+        playRequestID = UUID()
         playbackSegmentID = UUID()
         cancelCrossfade()
         isUserScrubbing = false
@@ -884,6 +887,31 @@ final class AudioPlayer: NSObject, ObservableObject {
             isAccessingSecurityResource = false
             currentSecurityURL = nil
         }
+    }
+
+    /// Stops every active playback path before starting a newly selected track.
+    private func stopActivePlaybackForSwitch() {
+        playbackSegmentID = UUID()
+        cancelCrossfade()
+        isUserScrubbing = false
+
+        playerNode?.stop()
+        audioEngine?.stop()
+        audioFile = nil
+        pausedPosition = 0
+
+        if let oldPlayer = audioPlayer {
+            oldPlayer.delegate = nil
+            oldPlayer.stop()
+        }
+        audioPlayer = nil
+
+        PlaybackAnalytics.shared.endLiveSession()
+        isPlaying = false
+        progress = 0
+        duration = 0
+        stopTimer()
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
     // MARK: - File Import
@@ -992,19 +1020,19 @@ final class AudioPlayer: NSObject, ObservableObject {
     }
 
     func play(url: URL) {
+        let requestID = UUID()
+        playRequestID = requestID
         cancelCrossfade()
         let fileName = url.lastPathComponent
         
         // Save current listening session before switching tracks
         saveCurrentListeningSession()
+        stopActivePlaybackForSwitch()
         
         // Reset analytics for new track
         accruedListenDuration = 0
-        playbackStartTime = isPlaying ? Date() : nil
+        playbackStartTime = nil
         hasRecordedCurrentSession = false  // Allow recording of the new track's session
-        
-        // Start live session tracking
-        PlaybackAnalytics.shared.startLiveSession(trackId: fileName, accruedDuration: 0)
 
         if let previousURL = currentSecurityURL, isAccessingSecurityResource {
             previousURL.stopAccessingSecurityScopedResource()
@@ -1032,6 +1060,7 @@ final class AudioPlayer: NSObject, ObservableObject {
                 let file = try AVAudioFile(forReading: resolvedURL)
                 
                 DispatchQueue.main.async {
+                    guard self.playRequestID == requestID else { return }
                     self.playWithEngine(file: file, url: url)
                 }
             } catch {
@@ -1043,6 +1072,7 @@ final class AudioPlayer: NSObject, ObservableObject {
                     let fileTypeHint = self.getFileTypeHint(for: resolvedURL)
                     
                     DispatchQueue.main.async {
+                        guard self.playRequestID == requestID else { return }
                         self.playWithAudioPlayer(data: fileData, fileTypeHint: fileTypeHint, url: url)
                     }
                 } catch {
@@ -1094,6 +1124,7 @@ final class AudioPlayer: NSObject, ObservableObject {
         
         // Update live session with actual duration
         playbackStartTime = Date()
+        PlaybackAnalytics.shared.startLiveSession(trackId: url.lastPathComponent, accruedDuration: 0)
         
         currentSecurityURL = nil
         isAccessingSecurityResource = false
@@ -1125,6 +1156,7 @@ final class AudioPlayer: NSObject, ObservableObject {
             
             // Update live session with actual duration
             playbackStartTime = Date()
+            PlaybackAnalytics.shared.startLiveSession(trackId: url.lastPathComponent, accruedDuration: 0)
 
             startTimer()
             updateNowPlayingInfo()
