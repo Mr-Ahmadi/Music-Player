@@ -2,6 +2,12 @@
 
 A powerful iOS music player app for playing locally stored audio files with advanced analytics, smart organization, and rich audio controls. Built with SwiftUI and AVFoundation.
 
+<p align="center">
+  <img src="Screenshot1.jpeg" alt="Offline Music Player Screenshot" width="140">
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="Screenshot2.jpeg" alt="Offline Music Player Screenshot" width="140">
+</p>
+
 ## Features
 
 ### Core Playback
