@@ -12,12 +12,28 @@ A powerful iOS music player app for playing locally stored audio files with adva
 
 ### Core Playback
 - **Local Audio Playback**: Play multiple audio formats from your device (MP3, M4A, WAV, AAC, AIFF, FLAC, OGG, AC3)
-- **Intuitive Controls**: Play, pause, skip tracks with responsive UI controls
+- **Full-Screen Player**: Large cover art, scrubbing, favourites and every control in one place
+- **Shuffle & Repeat**: Shuffle the whole library and repeat off / all / one, remembered between launches
+- **Up Next Queue**: Play Next and Add to Queue from any track, then reorder or clear the queue
+- **Playback Speed**: 0.5×–2× with pitch correction, so voices don't turn into chipmunks
+- **Sleep Timer**: Stop after a set time or at the end of the current track, with a gentle fade-out
+- **Skip Controls**: Configurable 5–60 second jumps, in the app and on the lock screen
+- **Resume Long Tracks**: Long recordings pick up where you left off
 - **Precise Seeking**: Drag to seek through tracks with real-time progress display
 - **Crossfading**: Smooth transitions between tracks with customizable fade durations and curves
 - **Background Playback**: Continue playing audio with lock screen controls and remote control center integration
 
+### Sound
+- **10-Band Equalizer**: ISO-standard bands from 32 Hz to 16 kHz, applied live as you drag
+- **14 Presets**: Bass Boost, Deep Bass, Vocal, Rock, Pop, Electronic, Hip-Hop, Jazz, Classical, Podcast and more
+- **Preamp**: Pull the level back when boosted bands push a loud track into distortion
+
 ### Library Management
+- **Embedded Tags & Cover Art**: Reads title, artist, album, genre and artwork straight out of your files
+- **Sorting**: My Order, title A–Z / Z–A, most played, recently played, or longest first
+- **Favorites**: Heart any track and filter the library down to just those
+- **Rich Search**: Matches title, artist, album, genre and labels
+- **Bulk Actions**: Select several tracks to share, queue, label or favorite them at once
 - **Multi-Audio Import**: Import multiple audio files at once from Files app, Telegram, email, or other sources
 - **Shared Files from Other Apps**: Support for AirDrop, share-to-open flow from messaging apps (Telegram, WhatsApp, etc.)
 - **Smart Organization**: Tag tracks with custom labels and filter playback by labels
@@ -56,8 +72,15 @@ OfflineMusicPlayer/
 │   ├── PlayerView.swift                     # Player controls and progress display
 │   ├── InsightsView.swift                   # Listening analytics & smart suggestions
 │   │
+│   ├── NowPlayingView.swift                 # Full-screen player
+│   ├── QueueView.swift                      # Up Next queue
+│   │
 │   ├── AudioPlayer.swift                    # Core playback engine & file management
 │   ├── AudioPlayer+Shared.swift             # Shared file handling extension
+│   ├── PlaybackModes.swift                  # Shuffle, repeat, speed & sort preferences
+│   ├── SleepTimer.swift                     # Sleep timer countdown
+│   ├── SleepTimerView.swift                 # Sleep timer UI
+│   ├── TrackTags.swift                      # Embedded tag/cover-art reading & artwork view
 │   ├── PlaybackAnalytics.swift              # Analytics tracking and statistics
 │   │
 │   ├── CrossfadeSettings.swift              # Crossfade configuration
@@ -72,8 +95,8 @@ OfflineMusicPlayer/
 │   ├── LabelPlaybackFilterView.swift        # Filter tracks by labels
 │   ├── MusicMetadata.swift                  # Label definitions and storage
 │   │
-│   ├── AudioSettings.swift                  # Audio preferences and effects settings
-│   ├── AudioEffectsView.swift               # Audio effects UI (Bass Boost control)
+│   ├── Equalizer.swift                      # 10-band EQ model and presets
+│   ├── AudioEffectsView.swift               # Equalizer UI
 │   ├── SettingsView.swift                   # App settings and preferences
 │   │
 │   ├── DocumentPicker.swift                 # File import UI (iOS/macOS)
@@ -252,15 +275,13 @@ xcodebuild -scheme OfflineMusicPlayer -configuration Debug test
 
 ## Future Enhancements
 
-- **Custom Playlists**: Create custom named playlists and queue management
-- **Advanced EQ**: Full parametric equalizer presets (Rock, Pop, Jazz, etc.) and visual spectrum analyzer
-- **Metadata Enrichment**: Auto-fetch track metadata (artist, album, artwork) from local tags or ID3 tags
-- **Podcast Support**: Chapter markers, variable playback speed, bookmarks
+- **Custom Playlists**: Create custom named playlists on top of the existing labels and Up Next queue
+- **Spectrum Analyzer**: Live visual feedback next to the equalizer bands
+- **Podcast Support**: Chapter markers and bookmarks
 - **Dark Mode**: Full dark mode theming and customization
 - **Cloud Sync**: iCloud backup and cross-device library synchronization
 - **Multi-User**: Separate profiles with independent libraries and analytics
-- **Advanced Search**: Metadata filtering, tag-based search with autocomplete
-- **Sleep Timer**: Playback timer with fade-out functionality
+- **Advanced Search**: Saved searches and tag autocomplete
 - **Siri Integration**: Voice commands and Siri Shortcuts support
 - **Enhanced Audio Effects**: Reverb, chorus, stereo widening, and other DSP effects
 

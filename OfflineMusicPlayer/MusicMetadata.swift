@@ -24,11 +24,36 @@ struct MusicMetadata: Codable, Identifiable {
     let id: String  // File name (unique identifier)
     var displayName: String
     var labels: [String]  // Label IDs
-    
-    init(id: String, displayName: String, labels: [String] = []) {
+    var isFavorite: Bool
+    /// 0 = unrated, 1...5 stars.
+    var rating: Int
+    /// Where the user last stopped in this track, in seconds. Used to resume long tracks.
+    var resumePosition: TimeInterval
+
+    init(id: String,
+         displayName: String,
+         labels: [String] = [],
+         isFavorite: Bool = false,
+         rating: Int = 0,
+         resumePosition: TimeInterval = 0) {
         self.id = id
         self.displayName = displayName
         self.labels = labels
+        self.isFavorite = isFavorite
+        self.rating = rating
+        self.resumePosition = resumePosition
+    }
+
+    // Decoded by hand so libraries saved by older builds (which had no
+    // favourite / rating / resume fields) still load.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        displayName = try container.decode(String.self, forKey: .displayName)
+        labels = try container.decodeIfPresent([String].self, forKey: .labels) ?? []
+        isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
+        rating = try container.decodeIfPresent(Int.self, forKey: .rating) ?? 0
+        resumePosition = try container.decodeIfPresent(TimeInterval.self, forKey: .resumePosition) ?? 0
     }
 }
 

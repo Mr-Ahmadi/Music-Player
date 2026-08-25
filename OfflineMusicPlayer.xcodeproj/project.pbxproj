@@ -7,6 +7,13 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		39A1B0402F20000100000000 /* PlaybackModes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0412F20000100000000 /* PlaybackModes.swift */; };
+		39A1B0422F20000100000001 /* Equalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0432F20000100000001 /* Equalizer.swift */; };
+		39A1B0442F20000100000002 /* SleepTimer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0452F20000100000002 /* SleepTimer.swift */; };
+		39A1B0462F20000100000003 /* TrackTags.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0472F20000100000003 /* TrackTags.swift */; };
+		39A1B0482F20000100000004 /* SleepTimerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0492F20000100000004 /* SleepTimerView.swift */; };
+		39A1B0502F20000100000005 /* QueueView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0512F20000100000005 /* QueueView.swift */; };
+		39A1B0522F20000100000006 /* NowPlayingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0532F20000100000006 /* NowPlayingView.swift */; };
 		3959A8782E872CA100ADA57A /* OfflineMusicPlayerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3959A8772E872CA100ADA57A /* OfflineMusicPlayerApp.swift */; };
 		3959A87A2E872CA100ADA57A /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3959A8792E872CA100ADA57A /* ContentView.swift */; };
 		3959A87C2E872CA200ADA57A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3959A87B2E872CA200ADA57A /* Assets.xcassets */; };
@@ -32,7 +39,6 @@
 		39A1B0192F10000100000003 /* JogEffectSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B01A2F10000100000003 /* JogEffectSettings.swift */; };
 		39A1B01B2F10000100000004 /* ScratchSoundManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B01C2F10000100000004 /* ScratchSoundManager.swift */; };
 		39A1B01D2F10000100000005 /* CrossfadeCurve.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B01E2F10000100000005 /* CrossfadeCurve.swift */; };
-		39A1B01F2F10000100000006 /* AudioSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0202F10000100000006 /* AudioSettings.swift */; };
 		39A1B0212F10000100000007 /* AudioEffectsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0222F10000100000007 /* AudioEffectsView.swift */; };
 		39A1B0242F10000100000008 /* AudioPlayer+Shared.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0232F10000100000008 /* AudioPlayer+Shared.swift */; };
 /* End PBXBuildFile section */
@@ -55,6 +61,13 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		39A1B0412F20000100000000 /* PlaybackModes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackModes.swift; sourceTree = "<group>"; };
+		39A1B0432F20000100000001 /* Equalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Equalizer.swift; sourceTree = "<group>"; };
+		39A1B0452F20000100000002 /* SleepTimer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepTimer.swift; sourceTree = "<group>"; };
+		39A1B0472F20000100000003 /* TrackTags.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackTags.swift; sourceTree = "<group>"; };
+		39A1B0492F20000100000004 /* SleepTimerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepTimerView.swift; sourceTree = "<group>"; };
+		39A1B0512F20000100000005 /* QueueView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueView.swift; sourceTree = "<group>"; };
+		39A1B0532F20000100000006 /* NowPlayingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingView.swift; sourceTree = "<group>"; };
 		3959A8742E872CA100ADA57A /* OfflineMusicPlayer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OfflineMusicPlayer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3959A8772E872CA100ADA57A /* OfflineMusicPlayerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineMusicPlayerApp.swift; sourceTree = "<group>"; };
 		3959A8792E872CA100ADA57A /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -83,7 +96,6 @@
 		39A1B01A2F10000100000003 /* JogEffectSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JogEffectSettings.swift; sourceTree = "<group>"; };
 		39A1B01C2F10000100000004 /* ScratchSoundManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScratchSoundManager.swift; sourceTree = "<group>"; };
 		39A1B01E2F10000100000005 /* CrossfadeCurve.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossfadeCurve.swift; sourceTree = "<group>"; };
-		39A1B0202F10000100000006 /* AudioSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioSettings.swift; sourceTree = "<group>"; };
 		39A1B0222F10000100000007 /* AudioEffectsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioEffectsView.swift; sourceTree = "<group>"; };
 		39A1B0232F10000100000008 /* AudioPlayer+Shared.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AudioPlayer+Shared.swift"; sourceTree = "<group>"; };
 		39CF1C0C2F0FBDCE001C9E79 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -159,8 +171,14 @@
 				39A1B01A2F10000100000003 /* JogEffectSettings.swift */,
 				39A1B01C2F10000100000004 /* ScratchSoundManager.swift */,
 				39A1B01E2F10000100000005 /* CrossfadeCurve.swift */,
-				39A1B0202F10000100000006 /* AudioSettings.swift */,
 				39A1B0222F10000100000007 /* AudioEffectsView.swift */,
+				39A1B0412F20000100000000 /* PlaybackModes.swift */,
+				39A1B0432F20000100000001 /* Equalizer.swift */,
+				39A1B0452F20000100000002 /* SleepTimer.swift */,
+				39A1B0472F20000100000003 /* TrackTags.swift */,
+				39A1B0492F20000100000004 /* SleepTimerView.swift */,
+				39A1B0512F20000100000005 /* QueueView.swift */,
+				39A1B0532F20000100000006 /* NowPlayingView.swift */,
 				3959A87B2E872CA200ADA57A /* Assets.xcassets */,
 				3959A87D2E872CA200ADA57A /* Preview Content */,
 			);
@@ -342,8 +360,14 @@
 				39A1B0192F10000100000003 /* JogEffectSettings.swift in Sources */,
 				39A1B01B2F10000100000004 /* ScratchSoundManager.swift in Sources */,
 				39A1B01D2F10000100000005 /* CrossfadeCurve.swift in Sources */,
-				39A1B01F2F10000100000006 /* AudioSettings.swift in Sources */,
 				39A1B0212F10000100000007 /* AudioEffectsView.swift in Sources */,
+				39A1B0402F20000100000000 /* PlaybackModes.swift in Sources */,
+				39A1B0422F20000100000001 /* Equalizer.swift in Sources */,
+				39A1B0442F20000100000002 /* SleepTimer.swift in Sources */,
+				39A1B0462F20000100000003 /* TrackTags.swift in Sources */,
+				39A1B0482F20000100000004 /* SleepTimerView.swift in Sources */,
+				39A1B0502F20000100000005 /* QueueView.swift in Sources */,
+				39A1B0522F20000100000006 /* NowPlayingView.swift in Sources */,
 				39A1B0242F10000100000008 /* AudioPlayer+Shared.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -1,21 +1,21 @@
 import SwiftUI
 
+/// The compact player docked at the bottom of the library.
+/// Tapping the artwork or title opens the full-screen `NowPlayingView`.
 struct PlayerView: View {
     @EnvironmentObject var player: AudioPlayer
     @StateObject private var metadataManager = MusicMetadataManager.shared
-    @ObservedObject private var jogSettings = JogEffectSettings.shared
-    @State private var lastSeekProgress: Double = 0
-    @State private var lastSeekTime: Date = .distantPast
-    
+    @ObservedObject private var tagStore = TrackTagStore.shared
+    @ObservedObject private var prefs = PlaybackPreferences.shared
+    @ObservedObject private var sleepTimer = SleepTimer.shared
+
+    @State private var showNowPlaying = false
+    @State private var showQueue = false
+
     var body: some View {
         VStack(spacing: 12) {
-            // Track info with artwork placeholder
             trackInfoView
-            
-            // Progress slider
             progressView
-            
-            // Playback controls
             controlsView
         }
         .padding(14)
@@ -27,96 +27,111 @@ struct PlayerView: View {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         )
+        .fullScreenCover(isPresented: $showNowPlaying) {
+            NowPlayingView().environmentObject(player)
+        }
+        .sheet(isPresented: $showQueue) {
+            QueueView().environmentObject(player)
+        }
     }
-    
-    // MARK: - Subviews
+
+    // MARK: - Track info
     private var trackInfoView: some View {
         Group {
             if let url = player.currentURL {
-                HStack(spacing: 12) {
-                    // Mini artwork
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(LinearGradient(
-                                gradient: Gradient(colors: [Color(red: 0.07, green: 0.75, blue: 0.89), Color(red: 0.04, green: 0.52, blue: 0.82)]),
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ))
-                        
-                        Image(systemName: "music.note")
-                            .font(.title2)
-                            .foregroundColor(.white)
-                    }
-                    .frame(width: 50, height: 50)
-                    
-                    // Track info (use display name from metadata)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(metadataManager.getMetadata(for: url.lastPathComponent).displayName)
-                            .font(.headline)
-                            .lineLimit(2)
-                        
-                        HStack {
-                            Text(url.pathExtension.uppercased())
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            
-                            if !player.labelFilterIds.isEmpty {
-                                let queue = player.getPlayQueue()
-                                if !queue.isEmpty {
-                                    Text("•")
+                let fileName = url.lastPathComponent
+                Button {
+                    showNowPlaying = true
+                } label: {
+                    HStack(spacing: 12) {
+                        TrackArtworkView(fileName: fileName, size: 50)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(metadataManager.getMetadata(for: fileName).displayName)
+                                .font(.headline)
+                                .foregroundColor(.primary)
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            HStack(spacing: 5) {
+                                if let subtitle = tagStore.cachedTags(for: fileName)?.subtitle {
+                                    Text(subtitle)
+                                        .font(.caption)
                                         .foregroundColor(.secondary)
-                                    Text(player.currentPlayQueueIndex >= 0 ? "\(player.currentPlayQueueIndex + 1) of \(queue.count)" : "— of \(queue.count)")
+                                        .lineLimit(1)
+                                } else {
+                                    Text(url.pathExtension.uppercased())
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
-                            } else if player.currentTrackIndex >= 0 {
-                                Text("•")
-                                    .foregroundColor(.secondary)
-                                Text("\(player.currentTrackIndex + 1) of \(player.tracks.count)")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+
+                                if let position = queuePositionText {
+                                    Text("•").foregroundColor(.secondary)
+                                    Text(position)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+
+                                if let sleep = sleepTimer.displayText {
+                                    Image(systemName: "moon.zzz.fill")
+                                        .font(.caption2)
+                                        .foregroundColor(.indigo)
+                                    Text(sleep)
+                                        .font(.caption.monospacedDigit())
+                                        .foregroundColor(.indigo)
+                                }
                             }
                         }
+
+                        Spacer(minLength: 4)
+
+                        Image(systemName: "chevron.up")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.secondary)
                     }
-                    
-                    Spacer()
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens the full player")
             } else {
                 HStack {
                     ZStack {
                         RoundedRectangle(cornerRadius: 8)
                             .fill(Color(UIColor.tertiarySystemGroupedBackground))
-                        
                         Image(systemName: "music.note.list")
                             .font(.title3)
                             .foregroundColor(.secondary)
                     }
                     .frame(width: 50, height: 50)
-                    
+
                     Text("No track selected")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
-                    
+
                     Spacer()
                 }
             }
         }
     }
-    
+
+    private var queuePositionText: String? {
+        let order = player.playbackOrder()
+        guard !order.isEmpty else { return nil }
+        guard player.currentPlayQueueIndex >= 0 else { return "— of \(order.count)" }
+        return "\(player.currentPlayQueueIndex + 1) of \(order.count)"
+    }
+
+    // MARK: - Progress
     private var progressView: some View {
         VStack(spacing: 4) {
             Slider(
                 value: Binding(
                     get: { player.progress },
-                    set: { newValue in
-                        player.seek(to: newValue)
-                    }
+                    set: { player.seek(to: $0) }
                 ),
                 in: 0...max(1, player.duration),
                 onEditingChanged: { editing in
                     if editing {
-                        lastSeekProgress = player.progress
-                        lastSeekTime = Date()
                         player.beginScrubbing()
                     } else {
                         player.endScrubbing(finalPosition: player.progress)
@@ -124,76 +139,110 @@ struct PlayerView: View {
                 }
             )
             .disabled(player.currentURL == nil)
-            .accentColor(.accentColor)
             .tint(.accentColor)
-            
+
             HStack {
                 Text(timeString(player.progress))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .monospacedDigit()
-                
                 Spacer()
-                
+                if prefs.playbackRate != 1.0 {
+                    Text(prefs.rateLabel)
+                        .font(.caption2.weight(.bold))
+                        .foregroundColor(.accentColor)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Color.accentColor.opacity(0.15))
+                        .cornerRadius(4)
+                    Spacer()
+                }
                 Text(timeString(player.duration))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .monospacedDigit()
             }
+            .font(.caption.monospacedDigit())
+            .foregroundColor(.secondary)
         }
     }
-    
+
+    // MARK: - Controls
     private var controlsView: some View {
-        HStack(spacing: 50) {
-            // Previous button
-            Button(action: { player.previousTrack() }) {
+        HStack {
+            Button {
+                player.toggleShuffle()
+            } label: {
+                Image(systemName: "shuffle")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(prefs.shuffleEnabled ? .accentColor : .secondary)
+            }
+            .frame(width: 40, height: 40)
+            .accessibilityLabel(prefs.shuffleEnabled ? "Shuffle on" : "Shuffle off")
+
+            Spacer(minLength: 0)
+
+            Button { player.previousTrack() } label: {
                 Image(systemName: "backward.fill")
-                    .font(.title2)
+                    .font(.title3)
                     .foregroundColor(player.tracks.isEmpty ? .secondary.opacity(0.55) : .primary)
             }
             .disabled(player.tracks.isEmpty)
             .accessibilityLabel("Previous track")
-            
-            // Play/Pause button
-            Button(action: { player.togglePlayPause() }) {
+
+            Spacer(minLength: 0)
+
+            Button { player.togglePlayPause() } label: {
                 ZStack {
                     Circle()
                         .fill(player.currentURL == nil ? Color.secondary.opacity(0.2) : Color.accentColor)
-                        .frame(width: 64, height: 64)
-                    
+                        .frame(width: 58, height: 58)
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title)
+                        .font(.title2)
                         .foregroundColor(.white)
                 }
             }
             .disabled(player.currentURL == nil)
             .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
-            
-            // Next button
-            Button(action: { player.nextTrack() }) {
+
+            Spacer(minLength: 0)
+
+            Button { player.nextTrack() } label: {
                 Image(systemName: "forward.fill")
-                    .font(.title2)
+                    .font(.title3)
                     .foregroundColor(player.tracks.isEmpty ? .secondary.opacity(0.55) : .primary)
             }
             .disabled(player.tracks.isEmpty)
             .accessibilityLabel("Next track")
+
+            Spacer(minLength: 0)
+
+            Button {
+                showQueue = true
+            } label: {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: "list.bullet")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(player.userQueue.isEmpty ? .secondary : .accentColor)
+                    if !player.userQueue.isEmpty {
+                        Text("\(player.userQueue.count)")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(3)
+                            .background(Circle().fill(Color.accentColor))
+                            .offset(x: 9, y: -8)
+                    }
+                }
+            }
+            .frame(width: 40, height: 40)
+            .accessibilityLabel("Up next")
         }
     }
-    
-    // MARK: - Helper Methods
+
+    // MARK: - Helpers
     private func timeString(_ seconds: Double) -> String {
         guard seconds.isFinite, seconds >= 0 else { return "0:00" }
-        
-        let totalSeconds = Int(seconds)
-        let hours = totalSeconds / 3600
-        let minutes = (totalSeconds % 3600) / 60
-        let secs = totalSeconds % 60
-        
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, secs)
-        } else {
-            return String(format: "%d:%02d", minutes, secs)
-        }
+        let total = Int(seconds)
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let secs = total % 60
+        return hours > 0
+            ? String(format: "%d:%02d:%02d", hours, minutes, secs)
+            : String(format: "%d:%02d", minutes, secs)
     }
 }
 
@@ -201,21 +250,9 @@ struct PlayerView: View {
 #if DEBUG
 struct PlayerView_Previews: PreviewProvider {
     static var previews: some View {
-        Group {
-            PlayerView()
-                .environmentObject(AudioPlayer())
-                .previewDisplayName("Empty State")
-            
-            PlayerView()
-                .environmentObject({
-                    let player = AudioPlayer()
-                    player.isPlaying = true
-                    player.progress = 45.0
-                    player.duration = 180.0
-                    return player
-                }())
-                .previewDisplayName("Playing State")
-        }
+        PlayerView()
+            .environmentObject(AudioPlayer())
+            .padding()
     }
 }
 #endif

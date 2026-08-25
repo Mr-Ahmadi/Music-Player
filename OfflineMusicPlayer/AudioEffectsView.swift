@@ -1,82 +1,222 @@
 import SwiftUI
 
+// MARK: - Equalizer
 struct AudioEffectsView: View {
-    @StateObject private var settings = AudioSettings.shared
-    
+    @StateObject private var eq = EqualizerSettings.shared
+    @State private var showResetConfirm = false
+
     var body: some View {
         Form {
-            Section(header: Text("Bass Boost"), footer: Text("Enhance low frequencies for deeper bass")) {
-                Toggle("Enable Bass Boost", isOn: $settings.bassBoostEnabled)
+            Section {
+                Toggle("Equalizer", isOn: $eq.isEnabled)
                     .tint(.purple)
-                
-                if settings.bassBoostEnabled {
-                    VStack(spacing: 16) {
-                        // Visual meter
-                        HStack(spacing: 4) {
-                            ForEach(0..<12) { i in
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(i < Int(settings.bassBoostLevel) ? 
-                                          (i < 4 ? Color.green : (i < 8 ? Color.yellow : Color.red)) : 
-                                          Color.gray.opacity(0.3))
-                                    .frame(height: 24)
-                            }
-                        }
-                        .animation(.easeInOut(duration: 0.1), value: settings.bassBoostLevel)
-                        
-                        HStack {
-                            Image(systemName: "speaker.wave.1.fill")
-                                .foregroundColor(.secondary)
-                            
-                            Slider(
-                                value: $settings.bassBoostLevel,
-                                in: 0...12,
-                                step: 1
-                            )
-                            .tint(.purple)
-                            
-                            Image(systemName: "speaker.wave.3.fill")
-                                .foregroundColor(.purple)
-                        }
-                        
-                        Text("\(Int(settings.bassBoostLevel)) dB")
-                            .font(.headline)
-                            .foregroundColor(.purple)
-                    }
-                    .padding(.vertical, 8)
-                }
+            } footer: {
+                Text("A 10-band equalizer applied to everything you play, in real time.")
             }
-            
-            Section(footer: Text("Bass boost amplifies frequencies below 100Hz for a fuller sound.")) {
+
+            Section("Presets") {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(EQPreset.builtIn) { preset in
+                            PresetChip(
+                                preset: preset,
+                                isSelected: eq.presetId == preset.id,
+                                action: { withAnimation(.easeOut(duration: 0.18)) { eq.apply(preset: preset) } }
+                            )
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 0))
+            }
+
+            Section {
+                EqualizerBandsView(eq: eq)
+                    .padding(.vertical, 8)
+            } header: {
+                HStack {
+                    Text("Bands")
+                    Spacer()
+                    Text(eq.currentPreset.name)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            } footer: {
+                Text("Drag any band to fine-tune. Editing a band switches the preset to Custom.")
+            }
+            .opacity(eq.isEnabled ? 1 : 0.45)
+            .disabled(!eq.isEnabled)
+
+            Section {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Image(systemName: "info.circle.fill")
-                            .foregroundColor(.blue)
-                        Text("Recommended Settings")
-                            .font(.body.bold())
+                        Text("Preamp")
+                        Spacer()
+                        Text(String(format: "%+.0f dB", eq.preamp))
+                            .font(.subheadline.monospacedDigit())
+                            .foregroundColor(.purple)
                     }
-                    
-                    VStack(alignment: .leading, spacing: 4) {
-                        Label("Normal listening: 3-6 dB", systemImage: "headphones")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        Label("Party mode: 8-10 dB", systemImage: "music.note.house.fill")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        Label("Maximum impact: 12 dB", systemImage: "speaker.wave.3.fill")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
+                    Slider(
+                        value: $eq.preamp,
+                        in: EqualizerSettings.preampRange.lowerBound...EqualizerSettings.preampRange.upperBound,
+                        step: 1
+                    )
+                    .tint(.purple)
                 }
-                .padding(.vertical, 4)
+            } footer: {
+                Text("Lower the preamp if boosted bands make loud tracks distort.")
+            }
+            .disabled(!eq.isEnabled)
+
+            Section {
+                Button(role: .destructive) {
+                    showResetConfirm = true
+                } label: {
+                    Label("Reset to Flat", systemImage: "arrow.counterclockwise")
+                }
             }
         }
-        .navigationTitle("Audio Effects")
+        .navigationTitle("Equalizer")
         .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog("Reset all bands to 0 dB?", isPresented: $showResetConfirm, titleVisibility: .visible) {
+            Button("Reset", role: .destructive) {
+                withAnimation { eq.resetToFlat() }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+}
+
+// MARK: - Preset Chip
+private struct PresetChip: View {
+    let preset: EQPreset
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                Image(systemName: preset.systemImage)
+                    .font(.system(size: 16, weight: .medium))
+                Text(preset.name)
+                    .font(.caption2.weight(.medium))
+                    .lineLimit(1)
+            }
+            .frame(width: 78, height: 58)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isSelected ? Color.purple : Color(UIColor.tertiarySystemFill))
+            )
+            .foregroundColor(isSelected ? .white : .primary)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(preset.name) preset")
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+}
+
+// MARK: - Bands
+/// Vertical gain sliders, one per band, driven by a drag gesture so all ten
+/// fit comfortably across a phone screen.
+private struct EqualizerBandsView: View {
+    @ObservedObject var eq: EqualizerSettings
+
+    private let trackHeight: CGFloat = 150
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 4) {
+            ForEach(Array(EqualizerSettings.frequencies.enumerated()), id: \.offset) { index, frequency in
+                VStack(spacing: 6) {
+                    Text(String(format: "%+.0f", gain(at: index)))
+                        .font(.system(size: 9, weight: .medium).monospacedDigit())
+                        .foregroundColor(gain(at: index) == 0 ? .secondary : .purple)
+
+                    BandSlider(
+                        value: Binding(
+                            get: { eq.gains.indices.contains(index) ? eq.gains[index] : 0 },
+                            set: { eq.setGain($0, forBand: index) }
+                        ),
+                        height: trackHeight
+                    )
+
+                    Text(EqualizerSettings.label(forFrequency: frequency))
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(EqualizerSettings.label(forFrequency: frequency)) hertz")
+                .accessibilityValue(String(format: "%+.0f decibels", gain(at: index)))
+                .accessibilityAdjustableAction { direction in
+                    let delta: Float = direction == .increment ? 1 : -1
+                    eq.setGain(gain(at: index) + delta, forBand: index)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func gain(at index: Int) -> Float {
+        eq.gains.indices.contains(index) ? eq.gains[index] : 0
+    }
+}
+
+private struct BandSlider: View {
+    @Binding var value: Float
+    let height: CGFloat
+
+    private let range = EqualizerSettings.gainRange
+
+    var body: some View {
+        GeometryReader { geo in
+            let width = geo.size.width
+            let fraction = CGFloat((value - range.lowerBound) / (range.upperBound - range.lowerBound))
+            let knobY = height - (fraction * height)
+
+            ZStack(alignment: .top) {
+                Capsule()
+                    .fill(Color(UIColor.tertiarySystemFill))
+                    .frame(width: 5)
+                    .frame(maxWidth: .infinity)
+
+                // Fill from the centre line out to the current gain.
+                Capsule()
+                    .fill(Color.purple.opacity(0.85))
+                    .frame(width: 5, height: abs(knobY - height / 2))
+                    .frame(maxWidth: .infinity)
+                    .offset(y: min(knobY, height / 2))
+
+                // Zero marker
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.35))
+                    .frame(height: 1)
+                    .offset(y: height / 2)
+
+                Circle()
+                    .fill(Color.white)
+                    .overlay(Circle().stroke(Color.purple, lineWidth: 2.5))
+                    .frame(width: 16, height: 16)
+                    .shadow(color: .black.opacity(0.15), radius: 2, y: 1)
+                    .offset(x: 0, y: knobY - 8)
+                    .frame(maxWidth: .infinity)
+            }
+            .frame(width: width, height: height)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { drag in
+                        let clampedY = min(max(drag.location.y, 0), height)
+                        let newFraction = Float(1 - clampedY / height)
+                        let newValue = range.lowerBound + newFraction * (range.upperBound - range.lowerBound)
+                        value = (newValue).rounded()
+                    }
+            )
+        }
+        .frame(height: height)
     }
 }
 
 #Preview {
-    NavigationView {
+    NavigationStack {
         AudioEffectsView()
     }
 }

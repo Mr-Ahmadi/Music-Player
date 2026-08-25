@@ -112,6 +112,50 @@ final class MusicMetadataManager: ObservableObject {
         }
     }
     
+    func toggleFavorite(fileName: String) {
+        DispatchQueue.main.async {
+            var trackMetadata = self.getMetadata(for: fileName)
+            trackMetadata.isFavorite.toggle()
+            self.metadata[fileName] = trackMetadata
+            self.saveMetadata()
+        }
+    }
+
+    func isFavorite(fileName: String) -> Bool {
+        metadata[fileName]?.isFavorite ?? false
+    }
+
+    func setRating(_ rating: Int, for fileName: String) {
+        DispatchQueue.main.async {
+            var trackMetadata = self.getMetadata(for: fileName)
+            trackMetadata.rating = min(max(rating, 0), 5)
+            self.metadata[fileName] = trackMetadata
+            self.saveMetadata()
+        }
+    }
+
+    /// Remembers where playback stopped so long tracks can be resumed later.
+    /// Positions near the start or the very end are cleared rather than stored.
+    func setResumePosition(_ position: TimeInterval, duration: TimeInterval, for fileName: String) {
+        let worthResuming = duration > 300 && position > 60 && position < duration - 30
+        let value = worthResuming ? position : 0
+        DispatchQueue.main.async {
+            var trackMetadata = self.getMetadata(for: fileName)
+            guard abs(trackMetadata.resumePosition - value) > 1 else { return }
+            trackMetadata.resumePosition = value
+            self.metadata[fileName] = trackMetadata
+            self.saveMetadata()
+        }
+    }
+
+    func resumePosition(for fileName: String) -> TimeInterval {
+        metadata[fileName]?.resumePosition ?? 0
+    }
+
+    var favoriteFileNames: Set<String> {
+        Set(metadata.filter { $0.value.isFavorite }.keys)
+    }
+
     func removeMusicMetadata(fileName: String) {
         DispatchQueue.main.async {
             self.metadata.removeValue(forKey: fileName)

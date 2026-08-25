@@ -20,11 +20,20 @@ final class AudioPlayer: NSObject, ObservableObject {
     @Published var labelFilterIds: Set<String> = [] {
         didSet { saveLabelFilter(); applyLabelFilterToPlayback() }
     }
+    /// Tracks the user explicitly queued up. These play before the normal queue
+    /// continues and are consumed as they play.
+    @Published private(set) var userQueue: [URL] = [] {
+        didSet { saveUserQueue() }
+    }
+    /// True while the sleep timer is fading the music out.
+    @Published private(set) var isFadingOut: Bool = false
 
     // MARK: - Audio Engine (for EQ effects)
     private var audioEngine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
     private var eqNode: AVAudioUnitEQ?
+    /// Applies playback speed without changing pitch.
+    private var timePitchNode: AVAudioUnitTimePitch?
     private var audioFile: AVAudioFile?
     private var audioFormat: AVAudioFormat?
     
@@ -64,8 +73,20 @@ final class AudioPlayer: NSObject, ObservableObject {
     private var lastScrubTime: Date?
     private var lastScrubPosition: TimeInterval?
     
-    // Audio Settings observer
+    // Audio Settings observers
     private var settingsObserver: AnyCancellable?
+    private var rateObserver: AnyCancellable?
+    private var skipObserver: AnyCancellable?
+    private var shuffleObserver: AnyCancellable?
+
+    // Shuffle
+    /// A shuffled permutation of the current play queue. Rebuilt when shuffle is
+    /// switched on, when the queue contents change, or when a shuffled pass ends.
+    private var shuffleOrder: [URL] = []
+    private let userQueueKey = "userPlayQueue"
+
+    // Sleep timer fade
+    private var fadeOutTimer: Timer?
     
     // Track playback position for engine-based playback
     private var engineStartTime: AVAudioTime?
@@ -77,6 +98,8 @@ final class AudioPlayer: NSObject, ObservableObject {
     // Analytics
     private var playbackStartTime: Date?
     private var accruedListenDuration: TimeInterval = 0
+    /// Position to jump to once the next track is loaded (resume support).
+    private var pendingResumePosition: TimeInterval = 0
     private var hasRecordedCurrentSession: Bool = false  // Prevent double-recording
 
     // MARK: - Initialization
@@ -89,6 +112,8 @@ final class AudioPlayer: NSObject, ObservableObject {
         loadFileHashes()
         loadLabelFilter()
         setupSettingsObserver()
+        setupShuffleObserver()
+        setupSleepTimer()
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             self?.loadTracks()
@@ -98,6 +123,10 @@ final class AudioPlayer: NSObject, ObservableObject {
     deinit {
         NotificationCenter.default.removeObserver(self)
         settingsObserver?.cancel()
+        rateObserver?.cancel()
+        skipObserver?.cancel()
+        shuffleObserver?.cancel()
+        fadeOutTimer?.invalidate()
         // Save current listening session before deallocs
         saveCurrentListeningSession()
         if let url = currentSecurityURL, isAccessingSecurityResource {
@@ -108,13 +137,27 @@ final class AudioPlayer: NSObject, ObservableObject {
     
     // MARK: - Settings Observer
     private func setupSettingsObserver() {
-        // Observe bass boost changes and update EQ in real-time
-        settingsObserver = AudioSettings.shared.$bassBoostEnabled
-            .combineLatest(AudioSettings.shared.$bassBoostLevel)
-            .removeDuplicates(by: { ($0.0 == $1.0 && $0.1 == $1.1) })
+        // Apply equalizer edits to the live audio graph as the user drags a slider.
+        let eq = EqualizerSettings.shared
+        settingsObserver = Publishers.CombineLatest3(eq.$isEnabled, eq.$gains, eq.$preamp)
+            .removeDuplicates { $0 == $1 }
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] (enabled, level) in
-                self?.updateBassBoostEQ(enabled: enabled, level: level)
+            .sink { [weak self] (enabled, gains, preamp) in
+                self?.applyEqualizer(enabled: enabled, gains: gains, preamp: preamp)
+            }
+
+        rateObserver = PlaybackPreferences.shared.$playbackRate
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] rate in
+                self?.applyPlaybackRate(rate)
+            }
+
+        skipObserver = PlaybackPreferences.shared.$skipInterval
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] interval in
+                self?.updateSkipIntervals(interval)
             }
     }
 
@@ -151,91 +194,84 @@ final class AudioPlayer: NSObject, ObservableObject {
         
         audioEngine = AVAudioEngine()
         playerNode = AVAudioPlayerNode()
-        
-        // Create 3-band EQ for professional sound
-        eqNode = AVAudioUnitEQ(numberOfBands: 3)
-        
+
+        // Full 10-band equalizer
+        eqNode = AVAudioUnitEQ(numberOfBands: EqualizerSettings.bandCount)
+        timePitchNode = AVAudioUnitTimePitch()
+
         guard let engine = audioEngine,
               let player = playerNode,
-              let eq = eqNode else { return }
-        
-        // Configure EQ bands for bass enhancement
-        configureBassBoostEQ()
-        
+              let eq = eqNode,
+              let timePitch = timePitchNode else { return }
+
+        configureEqualizerBands()
+        timePitch.rate = PlaybackPreferences.shared.playbackRate
+        // Keep the singer sounding like the singer at 1.5x.
+        timePitch.pitch = 0
+
         engine.attach(player)
+        engine.attach(timePitch)
         engine.attach(eq)
-        
-        // Connect: PlayerNode -> EQ -> MainMixer -> Output
+
+        // Connect: PlayerNode -> TimePitch -> EQ -> MainMixer -> Output
         // Connections will be made when we have audio format
     }
     
-    private func configureBassBoostEQ() {
+    /// Lays out one parametric band per equalizer frequency. Gains are applied
+    /// separately by `applyEqualizer` so presets can change without rebuilding nodes.
+    private func configureEqualizerBands() {
         guard let eq = eqNode else { return }
-        
-        // Band 0: Sub-bass (Low Shelf at 45Hz)
-        if eq.bands.count > 0 {
-            let subBass = eq.bands[0]
-            subBass.filterType = .lowShelf
-            subBass.frequency = 45.0
-            subBass.bandwidth = 1.2
-            subBass.gain = 0.0  // Will be set by updateBassBoostEQ
-            subBass.bypass = false
-        }
-        
-        // Band 1: Bass / Kick punch (Parametric Peak at 80Hz)
-        if eq.bands.count > 1 {
-            let bass = eq.bands[1]
-            bass.filterType = .parametric
-            bass.frequency = 80.0
-            bass.bandwidth = 1.0
-            bass.gain = 0.0
-            bass.bypass = false
-        }
-        
-        // Band 2: Clarity (Parametric Peak at 12kHz)
-        // High-end boost to maintain clarity when bass is heavy
-        if eq.bands.count > 2 {
-            let clarity = eq.bands[2]
-            clarity.filterType = .parametric
-            clarity.frequency = 12000.0
-            clarity.bandwidth = 1.5
-            clarity.gain = 0.0
-            clarity.bypass = false
-        }
-    }
-    
-    private func updateBassBoostEQ(enabled: Bool, level: Float) {
-        guard let eq = eqNode else { return }
-        
-        if !enabled {
-            // Bypass all bands
-            for band in eq.bands {
-                band.gain = 0.0
+        let frequencies = EqualizerSettings.frequencies
+
+        for (index, band) in eq.bands.enumerated() {
+            guard index < frequencies.count else {
+                band.bypass = true
+                continue
             }
+            // Shelves at the extremes so the lowest and highest bands actually
+            // move the energy you can hear, peaks everywhere in between.
+            if index == 0 {
+                band.filterType = .lowShelf
+            } else if index == frequencies.count - 1 {
+                band.filterType = .highShelf
+            } else {
+                band.filterType = .parametric
+            }
+            band.frequency = frequencies[index]
+            band.bandwidth = 1.0
+            band.gain = 0
+            band.bypass = false
+        }
+
+        let settings = EqualizerSettings.shared
+        applyEqualizer(enabled: settings.isEnabled, gains: settings.gains, preamp: settings.preamp)
+    }
+
+    private func applyEqualizer(enabled: Bool, gains: [Float], preamp: Float) {
+        guard let eq = eqNode else { return }
+
+        guard enabled else {
+            eq.globalGain = 0
+            for band in eq.bands { band.gain = 0 }
             return
         }
-        
-        // Apply gain based on level (0-12 dB)
-        // Distribute gain across bands for natural sound
-        
-        // Sub-bass gets the primary boost
-        if eq.bands.count > 0 {
-            eq.bands[0].gain = level * 1.0  // 100% of requested gain
+
+        eq.globalGain = min(max(preamp, -12), 12)
+        for (index, band) in eq.bands.enumerated() {
+            band.gain = index < gains.count ? min(max(gains[index], -12), 12) : 0
         }
-        
-        // Bass punch gets moderate boost
-        if eq.bands.count > 1 {
-            eq.bands[1].gain = level * 0.7  // 70% of requested gain
-        }
-        
-        // High-end gets subtle boost to balance the heavy low-end
-        if eq.bands.count > 2 {
-            eq.bands[2].gain = level * 0.25  // 25% for "air" and clarity
-        }
-        
-        print("AudioPlayer: Bass boost updated - enabled: \(enabled), level: \(level)dB")
     }
-    
+
+    private func applyPlaybackRate(_ rate: Float) {
+        let clamped = min(max(rate, 0.5), 2.0)
+        timePitchNode?.rate = clamped
+        audioPlayer?.enableRate = true
+        audioPlayer?.rate = clamped
+        crossfadePreloadedPlayer?.rate = clamped
+        crossfadeNextPlayer?.rate = clamped
+        updateNowPlayingInfo()
+    }
+
     private func teardownAudioEngine() {
         audioEngine?.stop()
         
@@ -246,9 +282,13 @@ final class AudioPlayer: NSObject, ObservableObject {
         if let eq = eqNode {
             audioEngine?.detach(eq)
         }
-        
+        if let timePitch = timePitchNode {
+            audioEngine?.detach(timePitch)
+        }
+
         playerNode = nil
         eqNode = nil
+        timePitchNode = nil
         audioEngine = nil
         audioFile = nil
         audioFormat = nil
@@ -257,20 +297,23 @@ final class AudioPlayer: NSObject, ObservableObject {
     private func connectAndStartEngine(format: AVAudioFormat) {
         guard let engine = audioEngine,
               let player = playerNode,
-              let eq = eqNode else { return }
-        
-        // Connect nodes with the audio format: Player -> EQ -> MainMixer
-        engine.connect(player, to: eq, format: format)
+              let eq = eqNode,
+              let timePitch = timePitchNode else { return }
+
+        // Player -> TimePitch (speed) -> EQ -> MainMixer
+        engine.connect(player, to: timePitch, format: format)
+        engine.connect(timePitch, to: eq, format: format)
         engine.connect(eq, to: engine.mainMixerNode, format: format)
-        
+        engine.mainMixerNode.outputVolume = 1.0
+
         do {
             try engine.start()
-            
-            // Apply current bass boost settings
-            let settings = AudioSettings.shared
-            updateBassBoostEQ(enabled: settings.bassBoostEnabled, level: settings.bassBoostLevel)
-            
-            print("AudioPlayer: ✅ Audio engine started with EQ")
+
+            let settings = EqualizerSettings.shared
+            applyEqualizer(enabled: settings.isEnabled, gains: settings.gains, preamp: settings.preamp)
+            timePitch.rate = PlaybackPreferences.shared.playbackRate
+
+            print("AudioPlayer: ✅ Audio engine started with 10-band EQ")
         } catch {
             print("AudioPlayer: ❌ Failed to start audio engine: \(error)")
         }
@@ -327,9 +370,10 @@ final class AudioPlayer: NSObject, ObservableObject {
             return .success
         }
 
-        // Skip forward/backward commands (15 seconds)
+        // Skip forward/backward commands (interval is user-configurable)
+        let skip = NSNumber(value: PlaybackPreferences.shared.skipInterval)
         commandCenter.skipForwardCommand.isEnabled = true
-        commandCenter.skipForwardCommand.preferredIntervals = [15]
+        commandCenter.skipForwardCommand.preferredIntervals = [skip]
         commandCenter.skipForwardCommand.addTarget { [weak self] event in
             guard let self = self,
                   let command = event.command as? MPSkipIntervalCommand else {
@@ -342,7 +386,7 @@ final class AudioPlayer: NSObject, ObservableObject {
         }
 
         commandCenter.skipBackwardCommand.isEnabled = true
-        commandCenter.skipBackwardCommand.preferredIntervals = [15]
+        commandCenter.skipBackwardCommand.preferredIntervals = [skip]
         commandCenter.skipBackwardCommand.addTarget { [weak self] event in
             guard let self = self,
                   let command = event.command as? MPSkipIntervalCommand else {
@@ -354,7 +398,33 @@ final class AudioPlayer: NSObject, ObservableObject {
             return .success
         }
 
+        // Rating / like button on the lock screen mirrors the in-app favourite.
+        commandCenter.likeCommand.isEnabled = true
+        commandCenter.likeCommand.localizedTitle = "Favorite"
+        commandCenter.likeCommand.addTarget { [weak self] _ in
+            guard let fileName = self?.currentURL?.lastPathComponent else { return .commandFailed }
+            MusicMetadataManager.shared.toggleFavorite(fileName: fileName)
+            return .success
+        }
+
         print("AudioPlayer: Remote commands configured")
+    }
+
+    private func updateSkipIntervals(_ interval: Int) {
+        let value = NSNumber(value: interval)
+        MPRemoteCommandCenter.shared().skipForwardCommand.preferredIntervals = [value]
+        MPRemoteCommandCenter.shared().skipBackwardCommand.preferredIntervals = [value]
+    }
+
+    /// Jumps by the user's configured skip interval.
+    func skipForward() {
+        let interval = TimeInterval(PlaybackPreferences.shared.skipInterval)
+        seek(to: min(getCurrentPlaybackTime() + interval, duration))
+    }
+
+    func skipBackward() {
+        let interval = TimeInterval(PlaybackPreferences.shared.skipInterval)
+        seek(to: max(getCurrentPlaybackTime() - interval, 0))
     }
     
     // MARK: - Get Current Playback Time
@@ -483,16 +553,29 @@ final class AudioPlayer: NSObject, ObservableObject {
         var nowPlayingInfo = [String: Any]()
         let fileName = url.lastPathComponent
         let trackTitle = MusicMetadataManager.shared.getMetadata(for: fileName).displayName
-        
+        let tags = TrackTagStore.shared.cachedTags(for: fileName)
+
         nowPlayingInfo[MPMediaItemPropertyTitle] = trackTitle
-        nowPlayingInfo[MPMediaItemPropertyArtist] = "Offline Music Player"
-        nowPlayingInfo[MPMediaItemPropertyAlbumTitle] = "Local Library"
+        nowPlayingInfo[MPMediaItemPropertyArtist] = tags?.artist ?? "Unknown Artist"
+        nowPlayingInfo[MPMediaItemPropertyAlbumTitle] = tags?.album ?? "Local Library"
+        if let genre = tags?.genre { nowPlayingInfo[MPMediaItemPropertyGenre] = genre }
 
         nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
         nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = getCurrentPlaybackTime()
-        nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
+        nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? Double(PlaybackPreferences.shared.playbackRate) : 0.0
 
-        nowPlayingInfo[MPMediaItemPropertyArtwork] = createProperArtwork()
+        let order = playbackOrder()
+        if currentPlayQueueIndex >= 0 {
+            nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackQueueIndex] = currentPlayQueueIndex
+            nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackQueueCount] = order.count
+        }
+
+        // Prefer the file's own cover art; fall back to the generated tile.
+        if let cover = TrackTagStore.shared.artwork(for: fileName) {
+            nowPlayingInfo[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: cover.size) { _ in cover }
+        } else {
+            nowPlayingInfo[MPMediaItemPropertyArtwork] = createProperArtwork()
+        }
 
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
         print("AudioPlayer: Updated Now Playing info for '\(trackTitle)'")
@@ -562,6 +645,7 @@ final class AudioPlayer: NSObject, ObservableObject {
     }
     
     private func resumePlayback() {
+        cancelFadeOut()
         // Try engine-based playback first
         if let engine = audioEngine, let player = playerNode, let file = audioFile {
             if !engine.isRunning {
@@ -640,7 +724,8 @@ final class AudioPlayer: NSObject, ObservableObject {
         isPlaying = false
         stopTimer()
         updateNowPlayingInfo()
-        
+        rememberResumePosition()
+
         // Update live session with accrued duration and pause it
         if let currentURL = currentURL {
             PlaybackAnalytics.shared.endLiveSession()
@@ -810,26 +895,238 @@ final class AudioPlayer: NSObject, ObservableObject {
         }
     }
 
+    /// Skip forward. A manual skip always moves on, even in Repeat One.
     func nextTrack() {
+        advance(automatic: false)
+    }
+
+    /// Restarts the current track when more than a few seconds in, otherwise
+    /// steps back — the behaviour people expect from a back button.
+    func previousTrack() {
+        if currentURL != nil, progress > 3.0 {
+            cancelCrossfade()
+            performSeek(to: 0)
+            return
+        }
+
         cancelCrossfade()
-        let queue = getPlayQueue()
-        guard !queue.isEmpty else { return }
-        if currentPlayQueueIndex < 0 { currentPlayQueueIndex = 0 }
-        else { currentPlayQueueIndex = (currentPlayQueueIndex + 1) % queue.count }
-        let url = queue[currentPlayQueueIndex]
+        let order = playbackOrder()
+        guard !order.isEmpty else { return }
+        if currentPlayQueueIndex < 0 { currentPlayQueueIndex = order.count - 1 }
+        else { currentPlayQueueIndex = currentPlayQueueIndex > 0 ? currentPlayQueueIndex - 1 : order.count - 1 }
+        let url = order[currentPlayQueueIndex]
         currentTrackIndex = tracks.firstIndex(of: url) ?? -1
+        play(url: url, allowResume: false)
+    }
+
+    /// Moves to the next thing that should play.
+    /// - Parameter automatic: true when a track ended on its own, which is the only
+    ///   case where Repeat One replays and the sleep timer may stop playback.
+    private func advance(automatic: Bool) {
+        cancelCrossfade()
+
+        if automatic, SleepTimer.shared.shouldStopAfterCurrentTrack() {
+            pause()
+            performSeek(to: 0)
+            return
+        }
+
+        // Anything the user queued by hand jumps the line.
+        if !userQueue.isEmpty {
+            let url = userQueue.removeFirst()
+            play(url: url, allowResume: false)
+            return
+        }
+
+        if automatic, PlaybackPreferences.shared.repeatMode == .one, let url = currentURL {
+            play(url: url, allowResume: false)
+            return
+        }
+
+        let order = playbackOrder()
+        guard !order.isEmpty else { return }
+
+        var index = currentPlayQueueIndex
+        if index < 0 {
+            index = 0
+        } else {
+            index += 1
+        }
+
+        if index >= order.count {
+            let repeatMode = PlaybackPreferences.shared.repeatMode
+            // Repeat Off means the library plays out and stops; a manual skip
+            // still wraps, because the user asked for another track.
+            guard repeatMode != .off || !automatic else {
+                pause()
+                performSeek(to: 0)
+                return
+            }
+            if PlaybackPreferences.shared.shuffleEnabled {
+                // Reshuffle so the next pass isn't the same running order.
+                rebuildShuffleOrder(startingAt: nil)
+            }
+            index = 0
+        }
+
+        let refreshed = playbackOrder()
+        guard refreshed.indices.contains(index) else { return }
+        let url = refreshed[index]
+        currentPlayQueueIndex = index
+        currentTrackIndex = tracks.firstIndex(of: url) ?? -1
+        play(url: url, allowResume: false)
+    }
+
+    // MARK: - Shuffle
+    private func setupShuffleObserver() {
+        shuffleObserver = PlaybackPreferences.shared.$shuffleEnabled
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] enabled in
+                guard let self else { return }
+                if enabled {
+                    // Start the shuffled run from whatever is playing right now.
+                    self.rebuildShuffleOrder(startingAt: self.currentURL)
+                } else {
+                    self.shuffleOrder = []
+                }
+                self.syncQueueIndexToCurrentTrack()
+            }
+    }
+
+    private func rebuildShuffleOrder(startingAt url: URL?) {
+        var order = getPlayQueue()
+        order.shuffle()
+        if let url, let index = order.firstIndex(of: url) {
+            order.remove(at: index)
+            order.insert(url, at: 0)
+        }
+        shuffleOrder = order
+    }
+
+    /// The order tracks actually play in: the label-filtered queue, shuffled when shuffle is on.
+    func playbackOrder() -> [URL] {
+        let base = getPlayQueue()
+        guard PlaybackPreferences.shared.shuffleEnabled else { return base }
+        if shuffleOrder.count != base.count || Set(shuffleOrder) != Set(base) {
+            rebuildShuffleOrder(startingAt: currentURL)
+        }
+        return shuffleOrder
+    }
+
+    private func syncQueueIndexToCurrentTrack() {
+        guard let url = currentURL else {
+            currentPlayQueueIndex = -1
+            return
+        }
+        currentPlayQueueIndex = playbackOrder().firstIndex(of: url) ?? -1
+    }
+
+    func toggleShuffle() {
+        PlaybackPreferences.shared.shuffleEnabled.toggle()
+    }
+
+    func cycleRepeatMode() {
+        PlaybackPreferences.shared.repeatMode = PlaybackPreferences.shared.repeatMode.next
+    }
+
+    // MARK: - Up Next queue
+    /// Inserts a track so it plays as soon as the current one ends.
+    func playNext(_ url: URL) {
+        userQueue.removeAll { $0 == url }
+        userQueue.insert(url, at: 0)
+    }
+
+    /// Appends a track to the end of the manual queue.
+    func addToQueue(_ url: URL) {
+        guard !userQueue.contains(url) else { return }
+        userQueue.append(url)
+    }
+
+    func removeFromQueue(atOffsets offsets: IndexSet) {
+        userQueue.remove(atOffsets: offsets)
+    }
+
+    func moveInQueue(from offsets: IndexSet, to destination: Int) {
+        userQueue.move(fromOffsets: offsets, toOffset: destination)
+    }
+
+    func clearQueue() {
+        userQueue.removeAll()
+    }
+
+    /// Plays a queued track immediately and drops everything ahead of it.
+    func jumpToQueued(_ url: URL) {
+        guard let index = userQueue.firstIndex(of: url) else { return }
+        userQueue.removeSubrange(0...index)
         play(url: url)
     }
 
-    func previousTrack() {
-        cancelCrossfade()
-        let queue = getPlayQueue()
-        guard !queue.isEmpty else { return }
-        if currentPlayQueueIndex < 0 { currentPlayQueueIndex = queue.count - 1 }
-        else { currentPlayQueueIndex = currentPlayQueueIndex > 0 ? currentPlayQueueIndex - 1 : queue.count - 1 }
-        let url = queue[currentPlayQueueIndex]
-        currentTrackIndex = tracks.firstIndex(of: url) ?? -1
-        play(url: url)
+    /// Shuffles the whole (filtered) library and starts playing.
+    func shuffleAll() {
+        let base = getPlayQueue()
+        guard !base.isEmpty else { return }
+        PlaybackPreferences.shared.shuffleEnabled = true
+        rebuildShuffleOrder(startingAt: nil)
+        userQueue.removeAll()
+        currentPlayQueueIndex = 0
+        play(url: shuffleOrder.first ?? base[0])
+    }
+
+    // MARK: - Sleep Timer
+    private func setupSleepTimer() {
+        SleepTimer.shared.onFire = { [weak self] in
+            self?.fadeOutAndPause()
+        }
+    }
+
+    /// Eases the volume down over a few seconds before pausing, so the timer
+    /// doesn't cut the music dead.
+    private func fadeOutAndPause(duration: TimeInterval = 5.0) {
+        guard isPlaying else {
+            pause()
+            return
+        }
+
+        fadeOutTimer?.invalidate()
+        isFadingOut = true
+
+        let steps = Int(duration / 0.05)
+        var step = 0
+        let engineStartVolume = audioEngine?.mainMixerNode.outputVolume ?? 1.0
+        let playerStartVolume = audioPlayer?.volume ?? 1.0
+
+        fadeOutTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] timer in
+            guard let self else {
+                timer.invalidate()
+                return
+            }
+            step += 1
+            let remaining = max(0, 1.0 - Float(step) / Float(max(steps, 1)))
+            self.audioEngine?.mainMixerNode.outputVolume = engineStartVolume * remaining
+            self.audioPlayer?.volume = playerStartVolume * remaining
+
+            if step >= steps {
+                timer.invalidate()
+                self.fadeOutTimer = nil
+                self.pause()
+                // Restore full volume so the next play isn't silent.
+                self.audioEngine?.mainMixerNode.outputVolume = engineStartVolume
+                self.audioPlayer?.volume = playerStartVolume
+                self.isFadingOut = false
+            }
+        }
+        if let fadeOutTimer { RunLoop.main.add(fadeOutTimer, forMode: .common) }
+    }
+
+    private func cancelFadeOut() {
+        fadeOutTimer?.invalidate()
+        fadeOutTimer = nil
+        if isFadingOut {
+            audioEngine?.mainMixerNode.outputVolume = 1.0
+            audioPlayer?.volume = 1.0
+            isFadingOut = false
+        }
     }
 
     // MARK: - Track Management
@@ -841,6 +1138,9 @@ final class AudioPlayer: NSObject, ObservableObject {
         let removingCurrentTrack = currentURL.map { tracksToRemove.contains($0) } ?? false
 
         tracks.remove(atOffsets: validOffsets)
+        let removedSet = Set(tracksToRemove)
+        userQueue.removeAll { removedSet.contains($0) }
+        shuffleOrder.removeAll { removedSet.contains($0) }
 
         for url in tracksToRemove {
             removeTrack(url: url, removeFromTracks: false)
@@ -943,6 +1243,7 @@ final class AudioPlayer: NSObject, ObservableObject {
 
         var addedCount = 0
         var skippedCount = 0
+        var importedURLs: [URL] = []
 
         for url in urls {
             let accessing = url.startAccessingSecurityScopedResource()
@@ -1000,6 +1301,7 @@ final class AudioPlayer: NSObject, ObservableObject {
                     self.tracks.append(destURL)
                 }
 
+                importedURLs.append(destURL)
                 addedCount += 1
                 print("AudioPlayer: Added track \(destURL.lastPathComponent)")
             } catch {
@@ -1009,6 +1311,8 @@ final class AudioPlayer: NSObject, ObservableObject {
 
         if addedCount > 0 {
             saveFileHashes()
+            // Read cover art and tags for the new files right away.
+            TrackTagStore.shared.prefetch(importedURLs.map { ($0.lastPathComponent, $0) })
         }
 
         print("AudioPlayer: Import complete - Added: \(addedCount), Skipped: \(skippedCount)")
@@ -1019,14 +1323,22 @@ final class AudioPlayer: NSObject, ObservableObject {
         resolveURL(fileName: url.lastPathComponent)
     }
 
-    func play(url: URL) {
+    /// - Parameter allowResume: when true (a deliberate tap), a remembered
+    ///   position inside a long track is restored. Auto-advance passes false so
+    ///   the next track always starts at the beginning.
+    func play(url: URL, allowResume: Bool = true) {
+        pendingResumePosition = allowResume
+            ? MusicMetadataManager.shared.resumePosition(for: url.lastPathComponent)
+            : 0
         let requestID = UUID()
         playRequestID = requestID
         cancelCrossfade()
+        cancelFadeOut()
         let fileName = url.lastPathComponent
-        
+
         // Save current listening session before switching tracks
         saveCurrentListeningSession()
+        rememberResumePosition()
         stopActivePlaybackForSwitch()
         
         // Reset analytics for new track
@@ -1114,10 +1426,9 @@ final class AudioPlayer: NSObject, ObservableObject {
         }
         
         player.play()
-        
+
         currentURL = url
-        let queue = getPlayQueue()
-        currentPlayQueueIndex = queue.firstIndex(of: url) ?? -1
+        currentPlayQueueIndex = playbackOrder().firstIndex(of: url) ?? -1
         currentTrackIndex = tracks.firstIndex(of: url) ?? -1
         isPlaying = true
         duration = Double(file.length) / file.processingFormat.sampleRate
@@ -1130,8 +1441,9 @@ final class AudioPlayer: NSObject, ObservableObject {
         isAccessingSecurityResource = false
         
         startTimer()
+        applyPendingResume()
         updateNowPlayingInfo()
-        
+
         print("AudioPlayer: ✅ Playing with AVAudioEngine + EQ: \(url.lastPathComponent)")
     }
     
@@ -1141,12 +1453,13 @@ final class AudioPlayer: NSObject, ObservableObject {
             audioPlayer = try AVAudioPlayer(data: data, fileTypeHint: fileTypeHint)
             audioPlayer?.delegate = self
             audioPlayer?.enableRate = true
+            audioPlayer?.rate = PlaybackPreferences.shared.playbackRate
+            audioPlayer?.volume = 1.0
             audioPlayer?.prepareToPlay()
             audioPlayer?.play()
 
             currentURL = url
-            let queue = getPlayQueue()
-            currentPlayQueueIndex = queue.firstIndex(of: url) ?? -1
+            currentPlayQueueIndex = playbackOrder().firstIndex(of: url) ?? -1
             currentTrackIndex = tracks.firstIndex(of: url) ?? -1
             isPlaying = true
             duration = audioPlayer?.duration ?? 0
@@ -1159,6 +1472,7 @@ final class AudioPlayer: NSObject, ObservableObject {
             PlaybackAnalytics.shared.startLiveSession(trackId: url.lastPathComponent, accruedDuration: 0)
 
             startTimer()
+            applyPendingResume()
             updateNowPlayingInfo()
 
             print("AudioPlayer: Playing with AVAudioPlayer (no EQ): \(url.lastPathComponent)")
@@ -1167,6 +1481,14 @@ final class AudioPlayer: NSObject, ObservableObject {
         }
     }
     
+    private func applyPendingResume() {
+        let position = pendingResumePosition
+        pendingResumePosition = 0
+        guard position > 1, position < duration - 5 else { return }
+        performSeek(to: position)
+        print("AudioPlayer: Resumed at \(Int(position))s")
+    }
+
     private func handlePlaybackFinished() {
         if isCrossfading { return }
         // Only record if we haven't already saved this session
@@ -1179,7 +1501,11 @@ final class AudioPlayer: NSObject, ObservableObject {
             )
             hasRecordedCurrentSession = true
         }
-        nextTrack()
+        // A finished track has no resume point.
+        if let url = currentURL {
+            MusicMetadataManager.shared.setResumePosition(0, duration: duration, for: url.lastPathComponent)
+        }
+        advance(automatic: true)
     }
 
     // MARK: - Helper Methods
@@ -1375,16 +1701,17 @@ final class AudioPlayer: NSObject, ObservableObject {
     private func checkCrossfadeStart() {
         guard crossfadeSettings.isEnabled,
               !isCrossfading,
-              getPlayQueue().count > 1,
+              !isFadingOut,
               currentURL != nil,
-              currentPlayQueueIndex >= 0 else { return }
-        let queue = getPlayQueue()
-        let remaining = duration - progress
-        let fadeDuration = crossfadeSettings.duration
-        let nextIndex = (currentPlayQueueIndex + 1) % queue.count
-        let nextURL = queue[nextIndex]
+              let nextURL = upcomingTrackForCrossfade() else { return }
 
-        let preloadWhenRemaining = min(8.0, fadeDuration * 3.0)
+        // `remaining` is in file time; at 1.5x speed it drains 1.5x faster, so the
+        // fade has to start proportionally earlier in file time to last as long.
+        let rate = Double(max(PlaybackPreferences.shared.playbackRate, 0.1))
+        let remaining = duration - progress
+        let fadeDuration = crossfadeSettings.duration * rate
+
+        let preloadWhenRemaining = min(8.0 * rate, fadeDuration * 3.0)
         if remaining <= preloadWhenRemaining, remaining > fadeDuration + Self.crossfadeLeadTime, crossfadePreloadedURL != nextURL {
             preloadNextTrackForCrossfade(url: nextURL)
         }
@@ -1392,6 +1719,26 @@ final class AudioPlayer: NSObject, ObservableObject {
         let triggerWhenRemaining = fadeDuration + Self.crossfadeLeadTime
         guard remaining <= triggerWhenRemaining, remaining > 0 else { return }
         beginCrossfade(to: nextURL)
+    }
+
+    /// What crossfade should blend into, mirroring `advance(automatic: true)`
+    /// without changing any state. Returns nil when nothing should follow.
+    private func upcomingTrackForCrossfade() -> URL? {
+        // The sleep timer is about to stop us; don't start another track.
+        if SleepTimer.shared.stopsAtEndOfTrack { return nil }
+        if let queued = userQueue.first { return queued }
+
+        let prefs = PlaybackPreferences.shared
+        // Repeat One re-plays the same file; crossfading a track into itself
+        // would double it up, so let the normal restart handle it.
+        if prefs.repeatMode == .one { return nil }
+
+        let order = playbackOrder()
+        guard order.count > 1, currentPlayQueueIndex >= 0 else { return nil }
+
+        let nextIndex = currentPlayQueueIndex + 1
+        if nextIndex < order.count { return order[nextIndex] }
+        return prefs.repeatMode == .all ? order.first : nil
     }
 
     private func preloadNextTrackForCrossfade(url: URL) {
@@ -1405,6 +1752,7 @@ final class AudioPlayer: NSObject, ObservableObject {
                 return
             }
             nextPlayer.enableRate = true
+            nextPlayer.rate = PlaybackPreferences.shared.playbackRate
             nextPlayer.prepareToPlay()
             DispatchQueue.main.async {
                 self.crossfadePreloadedPlayer?.stop()
@@ -1426,6 +1774,8 @@ final class AudioPlayer: NSObject, ObservableObject {
             crossfadePreloadedPlayer = nil
             crossfadePreloadedURL = nil
             nextPlayer.volume = 0
+            nextPlayer.enableRate = true
+            nextPlayer.rate = PlaybackPreferences.shared.playbackRate
             nextPlayer.play()
             crossfadeNextPlayer = nextPlayer
             crossfadeStartTime = Date()
@@ -1461,6 +1811,7 @@ final class AudioPlayer: NSObject, ObservableObject {
             }
             DispatchQueue.main.async {
                 nextPlayer.enableRate = true
+                nextPlayer.rate = PlaybackPreferences.shared.playbackRate
                 nextPlayer.volume = 0
                 nextPlayer.prepareToPlay()
                 nextPlayer.play()
@@ -1478,6 +1829,8 @@ final class AudioPlayer: NSObject, ObservableObject {
     private func updateCrossfadeVolumes() {
         guard let start = crossfadeStartTime else { return }
         let elapsed = Date().timeIntervalSince(start)
+        // Wall-clock fade: the configured duration is what the listener hears,
+        // regardless of playback speed.
         let fadeDuration = crossfadeSettings.duration
         if elapsed >= fadeDuration {
             audioPlayer?.volume = 1.0
@@ -1527,9 +1880,10 @@ final class AudioPlayer: NSObject, ObservableObject {
         crossfadeNextPlayer = nil
         audioPlayer?.delegate = self
         if let url = crossfadeInURL {
+            // If we faded into a hand-queued track, consume it from the queue.
+            if userQueue.first == url { userQueue.removeFirst() }
             currentURL = url
-            let queue = getPlayQueue()
-            currentPlayQueueIndex = queue.firstIndex(of: url) ?? 0
+            currentPlayQueueIndex = playbackOrder().firstIndex(of: url) ?? -1
             currentTrackIndex = tracks.firstIndex(of: url) ?? -1
             
             // Reset analytics for new track and start live session
@@ -1571,6 +1925,37 @@ final class AudioPlayer: NSObject, ObservableObject {
         }
     }
 
+    private func saveUserQueue() {
+        UserDefaults.standard.set(userQueue.map { $0.lastPathComponent }, forKey: userQueueKey)
+    }
+
+    private func loadUserQueue() {
+        guard let fileNames = UserDefaults.standard.array(forKey: userQueueKey) as? [String] else { return }
+        let byName = Dictionary(tracks.map { ($0.lastPathComponent, $0) }, uniquingKeysWith: { first, _ in first })
+        let restored = fileNames.compactMap { byName[$0] }
+        if restored != userQueue { userQueue = restored }
+    }
+
+    /// Reads embedded tags and cover art in the background so the library can show them.
+    private func prefetchTags(for urls: [URL]) {
+        let items: [(fileName: String, url: URL)] = urls.compactMap { url in
+            guard let resolved = self.resolveURL(fileName: url.lastPathComponent) else { return nil }
+            return (url.lastPathComponent, resolved)
+        }
+        guard !items.isEmpty else { return }
+        TrackTagStore.shared.prefetch(items)
+    }
+
+    /// Stores where the listener stopped, so long tracks can pick up where they left off.
+    private func rememberResumePosition() {
+        guard let url = currentURL, duration > 0 else { return }
+        MusicMetadataManager.shared.setResumePosition(
+            getCurrentPlaybackTime(),
+            duration: duration,
+            for: url.lastPathComponent
+        )
+    }
+
     private func saveLabelFilter() {
         let array = Array(labelFilterIds)
         UserDefaults.standard.set(array, forKey: labelFilterKey)
@@ -1586,7 +1971,7 @@ final class AudioPlayer: NSObject, ObservableObject {
     }
 
     private func applyLabelFilterToPlayback() {
-        let queue = getPlayQueue()
+        let queue = playbackOrder()
         if let url = currentURL, queue.contains(url) {
             currentPlayQueueIndex = queue.firstIndex(of: url) ?? 0
             currentTrackIndex = tracks.firstIndex(of: url) ?? -1
@@ -1650,7 +2035,9 @@ final class AudioPlayer: NSObject, ObservableObject {
             
             // Self-healing: Ensure all tracks have hashes for duplicate detection
             self.ensureHashesForTracks()
-            
+            self.loadUserQueue()
+            self.prefetchTags(for: self.tracks)
+
             print("AudioPlayer: Loaded \(loadedTracks.count) tracks (Total: \(self.tracks.count))")
         }
     }
