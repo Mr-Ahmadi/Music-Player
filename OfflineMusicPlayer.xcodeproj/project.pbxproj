@@ -10,6 +10,10 @@
 		39A1B0402F20000100000000 /* PlaybackModes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0412F20000100000000 /* PlaybackModes.swift */; };
 		39A1B0422F20000100000001 /* Equalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0432F20000100000001 /* Equalizer.swift */; };
 		39A1B0442F20000100000002 /* SleepTimer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0452F20000100000002 /* SleepTimer.swift */; };
+		39A1B0602F30000100000001 /* Lyrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0612F30000100000001 /* Lyrics.swift */; };
+		39A1B0622F30000100000002 /* LRCLIBClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0632F30000100000002 /* LRCLIBClient.swift */; };
+		39A1B0642F30000100000003 /* LyricsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0652F30000100000003 /* LyricsStore.swift */; };
+		39A1B0662F30000100000004 /* LyricsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0672F30000100000004 /* LyricsView.swift */; };
 		39A1B0462F20000100000003 /* TrackTags.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0472F20000100000003 /* TrackTags.swift */; };
 		39A1B0482F20000100000004 /* SleepTimerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0492F20000100000004 /* SleepTimerView.swift */; };
 		39A1B0502F20000100000005 /* QueueView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A1B0512F20000100000005 /* QueueView.swift */; };
@@ -64,6 +68,10 @@
 		39A1B0412F20000100000000 /* PlaybackModes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackModes.swift; sourceTree = "<group>"; };
 		39A1B0432F20000100000001 /* Equalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Equalizer.swift; sourceTree = "<group>"; };
 		39A1B0452F20000100000002 /* SleepTimer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepTimer.swift; sourceTree = "<group>"; };
+		39A1B0612F30000100000001 /* Lyrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Lyrics.swift; sourceTree = "<group>"; };
+		39A1B0632F30000100000002 /* LRCLIBClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LRCLIBClient.swift; sourceTree = "<group>"; };
+		39A1B0652F30000100000003 /* LyricsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsStore.swift; sourceTree = "<group>"; };
+		39A1B0672F30000100000004 /* LyricsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsView.swift; sourceTree = "<group>"; };
 		39A1B0472F20000100000003 /* TrackTags.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackTags.swift; sourceTree = "<group>"; };
 		39A1B0492F20000100000004 /* SleepTimerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepTimerView.swift; sourceTree = "<group>"; };
 		39A1B0512F20000100000005 /* QueueView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueView.swift; sourceTree = "<group>"; };
@@ -179,6 +187,10 @@
 				39A1B0492F20000100000004 /* SleepTimerView.swift */,
 				39A1B0512F20000100000005 /* QueueView.swift */,
 				39A1B0532F20000100000006 /* NowPlayingView.swift */,
+				39A1B0612F30000100000001 /* Lyrics.swift */,
+				39A1B0632F30000100000002 /* LRCLIBClient.swift */,
+				39A1B0652F30000100000003 /* LyricsStore.swift */,
+				39A1B0672F30000100000004 /* LyricsView.swift */,
 				3959A87B2E872CA200ADA57A /* Assets.xcassets */,
 				3959A87D2E872CA200ADA57A /* Preview Content */,
 			);
@@ -368,6 +380,10 @@
 				39A1B0482F20000100000004 /* SleepTimerView.swift in Sources */,
 				39A1B0502F20000100000005 /* QueueView.swift in Sources */,
 				39A1B0522F20000100000006 /* NowPlayingView.swift in Sources */,
+				39A1B0602F30000100000001 /* Lyrics.swift in Sources */,
+				39A1B0622F30000100000002 /* LRCLIBClient.swift in Sources */,
+				39A1B0642F30000100000003 /* LyricsStore.swift in Sources */,
+				39A1B0662F30000100000004 /* LyricsView.swift in Sources */,
 				39A1B0242F10000100000008 /* AudioPlayer+Shared.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

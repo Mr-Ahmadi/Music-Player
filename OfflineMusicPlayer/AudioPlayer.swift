@@ -428,6 +428,10 @@ final class AudioPlayer: NSObject, ObservableObject {
     }
     
     // MARK: - Get Current Playback Time
+    /// Precise position, read straight from the audio graph. `progress` only updates
+    /// twice a second, which is too coarse for things like synced lyrics.
+    var currentTime: TimeInterval { getCurrentPlaybackTime() }
+
     private func getCurrentPlaybackTime() -> TimeInterval {
         // Try engine-based playback first
         if let engine = audioEngine, engine.isRunning,

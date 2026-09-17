@@ -11,6 +11,7 @@ struct NowPlayingView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var showQueue = false
+    @State private var showLyrics = false
     @State private var showSpeedPicker = false
     @State private var isScrubbing = false
     @State private var scrubPosition: Double = 0
@@ -81,6 +82,9 @@ struct NowPlayingView: View {
         }
         .sheet(isPresented: $showQueue) {
             QueueView().environmentObject(player)
+        }
+        .fullScreenCover(isPresented: $showLyrics) {
+            LyricsView().environmentObject(player)
         }
     }
 
@@ -260,6 +264,17 @@ struct NowPlayingView: View {
                 pillLabel(icon: "speedometer", label: prefs.rateLabel, highlighted: prefs.playbackRate != 1.0)
             }
             .accessibilityLabel("Playback speed \(prefs.rateLabel)")
+
+            Spacer()
+
+            Button {
+                showLyrics = true
+            } label: {
+                pillLabel(icon: "quote.bubble", label: nil, highlighted: false)
+            }
+            .buttonStyle(.plain)
+            .disabled(player.currentURL == nil)
+            .accessibilityLabel("Lyrics")
 
             Spacer()
 
